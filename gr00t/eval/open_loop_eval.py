@@ -1,5 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
+import json
 import logging
 from pathlib import Path
 import re
@@ -82,8 +83,8 @@ def plot_trajectory_results(
         # The dimensions of state_joints and action are the same
         # only when the robot uses actions directly as joint commands.
         # Therefore, do not plot them if this is not the case.
-        if state_joints_across_time.shape == gt_action_across_time.shape:
-            ax.plot(state_joints_across_time[:, action_idx], label="state joints")
+        # if state_joints_across_time.shape == gt_action_across_time.shape:
+        #     ax.plot(state_joints_across_time[:, action_idx], label="state joints")
         ax.plot(gt_action_across_time[:, action_idx], label="gt action")
         ax.plot(pred_action_across_time[:, action_idx], label="pred action")
 
@@ -145,6 +146,8 @@ def evaluate_single_trajectory(
     steps=300,
     action_horizon=16,
     save_plot_path=None,
+    save_action_json_path=None,
+    save_gt_action_json_path=None,
 ):
     # Ensure steps doesn't exceed trajectory length
     traj = loader[traj_id]
@@ -201,6 +204,23 @@ def evaluate_single_trajectory(
         :actual_steps
     ]
     pred_action_across_time = np.array(pred_action_across_time)[:actual_steps]
+
+    # Save predicted actions to JSON: list of [root_x, root_y, root_z, qw, qx, qy, qz, joint_0, ..., joint_28]
+    if save_action_json_path is not None:
+        json_path = Path(save_action_json_path)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(json_path, "w") as f:
+            json.dump(pred_action_across_time.tolist(), f)
+        logging.info(f"Saved predicted actions to {json_path}")
+
+    # Save ground truth actions to JSON
+    if save_gt_action_json_path is not None:
+        gt_json_path = Path(save_gt_action_json_path)
+        gt_json_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(gt_json_path, "w") as f:
+            json.dump(gt_action_across_time.tolist(), f)
+        logging.info(f"Saved ground truth actions to {gt_json_path}")
+
     assert gt_action_across_time.shape == pred_action_across_time.shape, (
         f"gt_action: {gt_action_across_time.shape}, pred_action: {pred_action_across_time.shape}"
     )
@@ -266,6 +286,12 @@ class ArgsConfig:
 
     modality_keys: list[str] | None = None
     """List of modality keys to plot. If None, plot all keys."""
+
+    save_action_json_path: str | None = None
+    """Path to save predicted actions as JSON. Each timestep is saved as [root_x, root_y, root_z, qw, qx, qy, qz, joint_0, ..., joint_28]."""
+
+    save_gt_action_json_path: str | None = None
+    """Path to save ground truth actions as JSON. Same format as save_action_json_path."""
 
 
 def main(args: ArgsConfig):
@@ -335,6 +361,8 @@ def main(args: ArgsConfig):
             steps=args.steps,
             action_horizon=args.action_horizon,
             save_plot_path=args.save_plot_path,
+            save_action_json_path=args.save_action_json_path,
+            save_gt_action_json_path=args.save_gt_action_json_path,
         )
         logging.info(f"MSE for trajectory {traj_id}: {mse}, MAE: {mae}")
         all_mse.append(mse)

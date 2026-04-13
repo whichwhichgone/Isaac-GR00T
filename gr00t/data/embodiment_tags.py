@@ -59,3 +59,5 @@ class EmbodimentTag(Enum):
     """
     Any new embodiment.
     """
+
+    UNITREE_G1_29DOF = "unitree_g1_29dof"
