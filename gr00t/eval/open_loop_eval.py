@@ -148,6 +148,7 @@ def evaluate_single_trajectory(
     save_plot_path=None,
     save_action_json_path=None,
     save_gt_action_json_path=None,
+    save_state_json_path=None,
 ):
     # Ensure steps doesn't exceed trajectory length
     traj = loader[traj_id]
@@ -158,6 +159,7 @@ def evaluate_single_trajectory(
     )
 
     pred_action_across_time = []
+    state_input_across_steps = []
 
     # Extract state and action keys separately and sort for consistent order
     state_keys = loader.modality_configs["state"].modality_keys
@@ -177,6 +179,14 @@ def evaluate_single_trajectory(
             obs[f"video.{k}"] = np.array(v)  # (T, H, W, C)
         for language_key in loader.modality_configs["language"].modality_keys:
             obs[language_key] = data_point.text
+
+        # Collect state input for this inference step
+        state_entry = {"step": step_count}
+        for k, v in data_point.states.items():
+            arr = np.array(v)
+            state_entry[k] = arr.tolist()
+        state_input_across_steps.append(state_entry)
+
         parsed_obs = parse_observation_gr00t(obs, loader.modality_configs)
         _action_chunk, _ = policy.get_action(parsed_obs)
         action_chunk = parse_action_gr00t(_action_chunk)
@@ -220,6 +230,14 @@ def evaluate_single_trajectory(
         with open(gt_json_path, "w") as f:
             json.dump(gt_action_across_time.tolist(), f)
         logging.info(f"Saved ground truth actions to {gt_json_path}")
+
+    # Save state inputs to JSON: list of {step, <state_key>: [[...], ...], ...}
+    if save_state_json_path is not None:
+        state_json_path = Path(save_state_json_path)
+        state_json_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_json_path, "w") as f:
+            json.dump(state_input_across_steps, f)
+        logging.info(f"Saved state inputs to {state_json_path}")
 
     assert gt_action_across_time.shape == pred_action_across_time.shape, (
         f"gt_action: {gt_action_across_time.shape}, pred_action: {pred_action_across_time.shape}"
@@ -293,6 +311,9 @@ class ArgsConfig:
     save_gt_action_json_path: str | None = None
     """Path to save ground truth actions as JSON. Same format as save_action_json_path."""
 
+    save_state_json_path: str | None = None
+    """Path to save model input states as JSON. Each entry contains the inference step index and per-key state arrays with shape (T, D)."""
+
 
 def main(args: ArgsConfig):
     # Set up logging
@@ -363,6 +384,7 @@ def main(args: ArgsConfig):
             save_plot_path=args.save_plot_path,
             save_action_json_path=args.save_action_json_path,
             save_gt_action_json_path=args.save_gt_action_json_path,
+            save_state_json_path=args.save_state_json_path,
         )
         logging.info(f"MSE for trajectory {traj_id}: {mse}, MAE: {mae}")
         all_mse.append(mse)

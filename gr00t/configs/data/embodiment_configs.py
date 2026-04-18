@@ -418,7 +418,7 @@ MODALITY_CONFIGS = {
         ),
         "language": ModalityConfig(
             delta_indices=[0],
-            modality_keys=["annotation.human.task_description", "annotation.human.stickman"],
+            modality_keys=["annotation.human.task_description"],
         ),
     },
 }
