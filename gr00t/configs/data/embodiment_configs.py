@@ -420,6 +420,10 @@ MODALITY_CONFIGS = {
             delta_indices=[0],
             modality_keys=["annotation.human.task_description"],
         ),
+        "stickman": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=["annotation.human.stickman"],
+        ),
     },
 }
 

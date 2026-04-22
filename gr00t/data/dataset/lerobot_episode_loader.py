@@ -39,7 +39,7 @@ LEROBOT_MODALITY_FILENAME = "modality.json"
 LEROBOT_STATS_FILE_NAME = "stats.json"
 LEROBOT_RELATIVE_STATS_FILE_NAME = "relative_stats.json"
 
-ALLOWED_MODALITIES = ["video", "state", "action", "language", "mask"]
+ALLOWED_MODALITIES = ["video", "state", "action", "language", "mask", "stickman"]
 DEFAULT_COLUMN_NAMES = {
     "state": "observation.state",
     "action": "action",
@@ -338,6 +338,17 @@ class LeRobotEpisodeLoader:
                 loaded_df[f"language.{key}"] = original_df[original_key].apply(
                     lambda x: self.tasks_map[x]
                 )
+
+        # Load stickman-like numeric annotations as a modality parallel to state.
+        if "stickman" in self.modality_configs:
+            for key in self.modality_configs["stickman"].modality_keys:
+                assert key.startswith("annotation.")
+                subkey = key.replace("annotation.", "")
+                assert subkey in self.modality_meta["annotation"], (
+                    f"Key {subkey} not found in annotation modality"
+                )
+                original_key = self.modality_meta["annotation"][subkey].get("original_key", key)
+                loaded_df[f"stickman.{key}"] = original_df[original_key]
 
         # Extract joint groups for state and action modalities
         for modality_type in ["state", "action"]:

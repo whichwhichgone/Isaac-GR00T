@@ -33,7 +33,7 @@ def extract_step_data(
                 raise KeyError(
                     f"{modality}.{key} not found in episode data, available keys: {episode_data.columns}"
                 )
-            if modality in ["state", "action"]:
+            if modality in ["state", "action", "stickman"]:
                 # Stack arrays for numerical modalities
                 step_data[modality][key] = np.vstack(
                     [
@@ -50,6 +50,7 @@ def extract_step_data(
     mask_data = step_data.get("mask", {})
     state_data = step_data.get("state", {})
     action_data = step_data.get("action", {})
+    stickman_data = step_data.get("stickman", {})
     language_data = step_data.get("language", {})
     assert len(language_data) == 1, f"Expected 1 language, got {len(language_data)}"
     text = language_data[list(language_data.keys())[0]][0]
@@ -59,6 +60,7 @@ def extract_step_data(
         masks=mask_data if mask_data else None,
         states=state_data,
         actions=action_data,
+        stickman=stickman_data,
         text=text,
         embodiment=embodiment_tag,
     )

@@ -297,6 +297,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         embodiment_tag = content.embodiment
         action_data = content.actions
         state_data = content.states
+        stickman_data = content.stickman
 
         # Use StateActionProcessor to handle relative conversion and normalization
         normalized_states, normalized_actions = self.state_action_processor.apply(
@@ -383,6 +384,11 @@ class Gr00tN1d6Processor(BaseProcessor):
         transformed_inputs = {
             "state": normalized_states.to(torch.get_default_dtype()),
         }
+        if stickman_data:
+            stickman_keys = self.modality_configs[embodiment_tag.value]["stickman"].modality_keys
+            transformed_inputs["stickman"] = torch.cat(
+                [torch.from_numpy(stickman_data[key]) for key in stickman_keys], dim=-1
+            ).to(torch.get_default_dtype())
         if normalized_actions is not None:
             transformed_inputs["action"] = normalized_actions.to(torch.get_default_dtype())
         # Add VLM inputs
