@@ -223,6 +223,9 @@ class Eagle3_VLForConditionalGeneration(Eagle3_VLPreTrainedModel, GenerationMixi
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        stickman_embeds: Optional[torch.Tensor] = None,
+        use_stickman: Optional[torch.Tensor] = None,
+        stickman_token_index: Optional[int] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
@@ -251,6 +254,21 @@ class Eagle3_VLForConditionalGeneration(Eagle3_VLPreTrainedModel, GenerationMixi
             )
             n_token = selected.sum()
             input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds[:n_token]
+
+        if stickman_embeds is not None and stickman_token_index is not None:
+            stickman_selected = input_ids == stickman_token_index
+            if torch.any(stickman_selected):
+                if use_stickman is not None:
+                    stickman_embeds = stickman_embeds[use_stickman.to(dtype=torch.bool)]
+                stickman_embeds = stickman_embeds.reshape(-1, C).to(input_embeds.dtype)
+                if stickman_selected.sum() != stickman_embeds.shape[0]:
+                    raise ValueError(
+                        f"stickman token count {stickman_selected.sum().item()} does not match "
+                        f"stickman_embeds count {stickman_embeds.shape[0]}"
+                    )
+                input_embeds[stickman_selected] = (
+                    input_embeds[stickman_selected] * 0.0 + stickman_embeds
+                )
 
         input_embeds = input_embeds.reshape(B, N, C)
 

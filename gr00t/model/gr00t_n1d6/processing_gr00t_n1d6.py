@@ -29,6 +29,10 @@ from .image_augmentations import (
 # Suppress protobuf deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.protobuf")
 
+### Number of keypoints in the stickman representation.
+STICKMAN_NUM_KEYPOINTS = 18
+STICKMAN_TOKEN = "<|fim_pad|>"
+
 ### Mapping from embodiment tag to projector index.
 EMBODIMENT_TAG_TO_PROJECTOR_INDEX = {
     ##### Pretrain embodiment ids #####
@@ -125,6 +129,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         model_type: Literal["eagle"] = "eagle",
         max_state_dim: int = 29,
         max_action_dim: int = 29,
+        max_stickman_dim: int = 18,
         apply_sincos_state_encoding: bool = False,
         max_action_horizon: int = 40,
         use_albumentations: bool = False,
@@ -159,6 +164,7 @@ class Gr00tN1d6Processor(BaseProcessor):
 
         self.max_state_dim = max_state_dim
         self.max_action_dim = max_action_dim
+        self.max_stickman_dim = max_stickman_dim
         self.max_action_horizon = max_action_horizon
 
         # Save image processing settings
@@ -253,7 +259,9 @@ class Gr00tN1d6Processor(BaseProcessor):
             out_dict, embodiment_tag.value, state=state
         )
 
-    def _apply_vlm_processing(self, images: np.ndarray, language: str) -> BatchFeature:
+    def _apply_vlm_processing(
+        self, images: np.ndarray, language: str, stickman_token_count: int = 0
+    ) -> BatchFeature:
         """
         Args:
             batch:
@@ -263,14 +271,19 @@ class Gr00tN1d6Processor(BaseProcessor):
         # Convert images to PIL format
         pil_images = [Image.fromarray(np.transpose(v, (1, 2, 0))) for v in images]
 
-        # Create conversation with images and text
+        # Empty text uses image + stickman placeholder tokens.
+        conversation_content = []
+        if language.strip():
+            conversation_content.append({"type": "text", "text": language})
+        conversation_content.extend({"type": "image", "image": img} for img in pil_images)
+        if stickman_token_count > 0:
+            conversation_content.append(
+                {"type": "text", "text": STICKMAN_TOKEN * stickman_token_count}
+            )
         conversation = [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": language},
-                    *[{"type": "image", "image": img} for img in pil_images],
-                ],
+                "content": conversation_content,
             }
         ]
 
@@ -367,11 +380,36 @@ class Gr00tN1d6Processor(BaseProcessor):
             image_transform = self.eval_image_transform
         image_keys = self.modality_configs[embodiment_tag.value]["video"].modality_keys
 
+        raw_language = content.text or ""
+        use_stickman = bool(stickman_data) and raw_language.strip() == ""
+
         if self.formalize_language:
-            language = content.text.lower()
+            language = raw_language.lower()
             language = re.sub(r"[^\w\s]", "", language)
         else:
-            language = content.text
+            language = raw_language
+
+        stickman = None
+        stickman_token_count = 0
+        if stickman_data:
+            stickman_keys = self.modality_configs[embodiment_tag.value]["stickman"].modality_keys
+            stickman = torch.cat(
+                [torch.from_numpy(stickman_data[key]) for key in stickman_keys], dim=-1
+            )
+            stickman = stickman.reshape(-1, STICKMAN_NUM_KEYPOINTS)
+            stickman_dim = stickman.shape[1]
+            if stickman_dim > self.max_stickman_dim:
+                raise ValueError(
+                    f"Stickman dim {stickman_dim} exceeds max_stickman_dim {self.max_stickman_dim}"
+                )
+            stickman = torch.cat(
+                [
+                    stickman,
+                    torch.zeros(stickman.shape[0], self.max_stickman_dim - stickman_dim),
+                ],
+                dim=-1,
+            )
+            stickman_token_count = stickman.shape[0] if use_stickman else 0
 
         vlm_inputs = self._get_vlm_inputs(
             image_keys=image_keys,
@@ -379,16 +417,15 @@ class Gr00tN1d6Processor(BaseProcessor):
             masks=content.masks,
             image_transform=image_transform,
             language=language,
+            stickman_token_count=stickman_token_count,
         )
 
         transformed_inputs = {
             "state": normalized_states.to(torch.get_default_dtype()),
         }
-        if stickman_data:
-            stickman_keys = self.modality_configs[embodiment_tag.value]["stickman"].modality_keys
-            transformed_inputs["stickman"] = torch.cat(
-                [torch.from_numpy(stickman_data[key]) for key in stickman_keys], dim=-1
-            ).to(torch.get_default_dtype())
+        if stickman is not None:
+            transformed_inputs["stickman"] = stickman.to(torch.get_default_dtype())
+        transformed_inputs["use_stickman"] = torch.tensor(use_stickman, dtype=torch.bool)
         if normalized_actions is not None:
             transformed_inputs["action"] = normalized_actions.to(torch.get_default_dtype())
         # Add VLM inputs
@@ -405,6 +442,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         masks: dict[str, list[np.ndarray]] | None,
         image_transform: transforms.Compose | A.Compose,
         language: str,
+        stickman_token_count: int = 0,
     ):
         temporal_stacked_images = {}
 
@@ -448,7 +486,9 @@ class Gr00tN1d6Processor(BaseProcessor):
             .numpy()
         )  # (T*V, C, H, W), Eagle processor expects numpy array
 
-        vlm_inputs = self._apply_vlm_processing(stacked_images, language)
+        vlm_inputs = self._apply_vlm_processing(
+            stacked_images, language, stickman_token_count=stickman_token_count
+        )
         return vlm_inputs
 
     def save_pretrained(self, save_directory: str | Path) -> list[Path]:
@@ -477,6 +517,7 @@ class Gr00tN1d6Processor(BaseProcessor):
                 # State action dimensions
                 "max_state_dim": self.max_state_dim,
                 "max_action_dim": self.max_action_dim,
+                "max_stickman_dim": self.max_stickman_dim,
                 "max_action_horizon": self.max_action_horizon,
                 # StateActionProcessor settings
                 "use_percentiles": self.use_percentiles,

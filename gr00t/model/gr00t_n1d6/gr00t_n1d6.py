@@ -448,6 +448,7 @@ class Gr00tN1d6(PreTrainedModel):
             load_bf16=config.load_bf16,
             tune_top_llm_layers=config.tune_top_llm_layers,
             trainable_params_fp32=config.backbone_trainable_params_fp32,
+            max_stickman_dim=config.max_stickman_dim,
             transformers_loading_kwargs=transformers_loading_kwargs,
         )
 

@@ -158,6 +158,7 @@ class Gr00tN1d6Pipeline(ModelPipeline):
                 formalize_language=self.model_config.formalize_language,
                 max_state_dim=self.model_config.max_state_dim,
                 max_action_dim=self.model_config.max_action_dim,
+                max_stickman_dim=self.model_config.max_stickman_dim,
                 apply_sincos_state_encoding=self.model_config.apply_sincos_state_encoding,
                 max_action_horizon=self.model_config.action_horizon,
                 use_albumentations=self.model_config.use_albumentations_transforms,

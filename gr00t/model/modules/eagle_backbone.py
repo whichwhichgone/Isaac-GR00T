@@ -18,6 +18,8 @@ class EagleBackbone(torch.nn.Module):
         load_bf16: bool = False,
         tune_top_llm_layers: int = 0,
         trainable_params_fp32: bool = False,
+        max_stickman_dim: int = 18,
+        stickman_token_index: int = 151662,
         transformers_loading_kwargs: dict = {},
     ):
         """
@@ -45,8 +47,16 @@ class EagleBackbone(torch.nn.Module):
             eagle_path = os.path.join(os.path.dirname(__file__), "nvidia", "Eagle-Block2A-2B-v2")
             config = AutoConfig.from_pretrained(eagle_path, trust_remote_code=True)
             self.model = AutoModel.from_config(config, trust_remote_code=True)
+            import inspect
+
+            print("Eagle3 source:", inspect.getsourcefile(self.model.__class__))
         else:
             raise ValueError(f"Model {model_name} not supported")
+
+        self.stickman_token_index = stickman_token_index
+        self.stickman_encoder = torch.nn.Linear(
+            max_stickman_dim, self.model.config.text_config.hidden_size
+        )
 
         # needed since we don't use these layers. Also saves compute
         while len(self.model.language_model.model.layers) > select_layer:
@@ -105,8 +115,16 @@ class EagleBackbone(torch.nn.Module):
     def forward(self, vl_input: BatchFeature) -> BatchFeature:
         self.set_frozen_modules_to_eval_mode()
         # 0. Set frozen module to eval
-        keys_to_use = ["input_ids", "attention_mask", "pixel_values"]
-        vl_input = {k: vl_input[k] for k in keys_to_use}
+        keys_to_use = ["input_ids", "attention_mask", "pixel_values", "stickman", "use_stickman"]
+        vl_input = {k: vl_input[k] for k in keys_to_use if k in vl_input}
+        stickman = vl_input.pop("stickman", None)
+        if stickman is not None:
+            stickman = stickman.to(
+                device=self.stickman_encoder.weight.device,
+                dtype=self.stickman_encoder.weight.dtype,
+            )
+            vl_input["stickman_embeds"] = self.stickman_encoder(stickman)
+            vl_input["stickman_token_index"] = self.stickman_token_index
         outputs = self.model(**vl_input, output_hidden_states=True)
         outputs = outputs["hidden_states"][-1]
         image_mask = vl_input["input_ids"] == self.model.config.image_token_index

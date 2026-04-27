@@ -216,28 +216,25 @@ def evaluate_single_trajectory(
     pred_action_across_time = np.array(pred_action_across_time)[:actual_steps]
 
     # Save predicted actions to JSON: list of [root_x, root_y, root_z, qw, qx, qy, qz, joint_0, ..., joint_28]
-    if save_action_json_path is not None:
-        json_path = Path(save_action_json_path)
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(json_path, "w") as f:
-            json.dump(pred_action_across_time.tolist(), f)
-        logging.info(f"Saved predicted actions to {json_path}")
+    json_path = Path(save_action_json_path or f"./open_loop_eval/traj_{traj_id}_actions.json")
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(json_path, "w") as f:
+        json.dump(pred_action_across_time.tolist(), f)
+    logging.info(f"Saved predicted actions to {json_path}")
 
     # Save ground truth actions to JSON
-    if save_gt_action_json_path is not None:
-        gt_json_path = Path(save_gt_action_json_path)
-        gt_json_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(gt_json_path, "w") as f:
-            json.dump(gt_action_across_time.tolist(), f)
-        logging.info(f"Saved ground truth actions to {gt_json_path}")
+    gt_json_path = Path(save_gt_action_json_path or f"./open_loop_eval/traj_{traj_id}_gt_actions.json")
+    gt_json_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(gt_json_path, "w") as f:
+        json.dump(gt_action_across_time.tolist(), f)
+    logging.info(f"Saved ground truth actions to {gt_json_path}")
 
     # Save state inputs to JSON: list of {step, <state_key>: [[...], ...], ...}
-    if save_state_json_path is not None:
-        state_json_path = Path(save_state_json_path)
-        state_json_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(state_json_path, "w") as f:
-            json.dump(state_input_across_steps, f)
-        logging.info(f"Saved state inputs to {state_json_path}")
+    state_json_path = Path(save_state_json_path or f"./open_loop_eval/traj_{traj_id}_states.json")
+    state_json_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(state_json_path, "w") as f:
+        json.dump(state_input_across_steps, f)
+    logging.info(f"Saved state inputs to {state_json_path}")
 
     assert gt_action_across_time.shape == pred_action_across_time.shape, (
         f"gt_action: {gt_action_across_time.shape}, pred_action: {pred_action_across_time.shape}"
@@ -262,7 +259,7 @@ def evaluate_single_trajectory(
         state_keys=state_keys,
         action_keys=action_keys,
         action_horizon=action_horizon,
-        save_plot_path=save_plot_path or f"/tmp/open_loop_eval/traj_{traj_id}.jpeg",
+        save_plot_path=save_plot_path or f"./open_loop_eval/traj_{traj_id}.jpeg",
     )
 
     return mse, mae

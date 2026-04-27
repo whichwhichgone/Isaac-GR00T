@@ -29,6 +29,7 @@ class Eagle3_VLConfig(PretrainedConfig):
         loss_version="v1",
         mlp_checkpoint=False,
         image_token_index=151667,
+        stickman_token_index=151662,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -80,6 +81,7 @@ class Eagle3_VLConfig(PretrainedConfig):
         self.loss_version = loss_version
         self.tie_word_embeddings = self.text_config.tie_word_embeddings
         self.image_token_index = image_token_index
+        self.stickman_token_index = stickman_token_index
 
     def to_dict(self):
         """
@@ -98,6 +100,7 @@ class Eagle3_VLConfig(PretrainedConfig):
         output["downsample_ratio"] = self.downsample_ratio
         output["template"] = self.template
         output["image_token_index"] = self.image_token_index
+        output["stickman_token_index"] = self.stickman_token_index
         output["_attn_implementation"] = self._attn_implementation
         output["_attn_implementation_autoset"] = self._attn_implementation_autoset
         return output
