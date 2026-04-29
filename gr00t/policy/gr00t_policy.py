@@ -120,6 +120,7 @@ class Gr00tPolicy(BasePolicy):
                 "video": {k: v[i] for k, v in value["video"].items()},
                 "state": {k: v[i] for k, v in value["state"].items()},
                 "language": {k: v[i] for k, v in value["language"].items()},
+                "stickman": {k: v[i] for k, v in value["stickman"].items()},
             }
             unbatched_obs.append(unbatched_value)
         return unbatched_obs
@@ -137,6 +138,7 @@ class Gr00tPolicy(BasePolicy):
             images=observation["video"],
             states=observation["state"],
             actions={},  # No ground truth actions during inference
+            stickman=observation["stickman"],
             text=observation["language"][self.language_key][0],
             embodiment=self.embodiment_tag,
         )
@@ -168,7 +170,7 @@ class Gr00tPolicy(BasePolicy):
             AssertionError: If any validation check fails
         """
         # Check that observation contains all required top-level modality keys
-        for modality in ["video", "state", "language"]:
+        for modality in ["video", "state", "language", "stickman"]:
             assert modality in observation, f"Observation must contain a '{modality}' key"
             assert isinstance(observation[modality], dict), (
                 f"Observation '{modality}' must be a dictionary. Got {type(observation[modality])}: {observation[modality]}"
@@ -302,6 +304,35 @@ class Gr00tPolicy(BasePolicy):
                 assert isinstance(batch_item[0], str), (
                     f"Language batch item must be a string. Got {type(batch_item[0])}"
                 )
+
+        # ===== STICKMAN VALIDATION =====
+        for stickman_key in self.modality_configs["stickman"].modality_keys:
+            if bs == -1:
+                bs = len(observation["stickman"][stickman_key])
+            else:
+                assert len(observation["stickman"][stickman_key]) == bs, (
+                    f"Stickman key '{stickman_key}' must have batch size {bs}. Got {len(observation['stickman'][stickman_key])}"
+                )
+
+            assert stickman_key in observation["stickman"], (
+                f"Stickman key '{stickman_key}' must be in observation"
+            )
+
+            batched_stickman = observation["stickman"][stickman_key]
+            assert isinstance(batched_stickman, np.ndarray), (
+                f"Stickman key '{stickman_key}' must be a numpy array. Got {type(batched_stickman)}"
+            )
+            assert batched_stickman.dtype == np.float32, (
+                f"Stickman key '{stickman_key}' must be a numpy array of type np.float32. Got {batched_stickman.dtype}"
+            )
+            assert batched_stickman.ndim == 3, (
+                f"Stickman key '{stickman_key}' must be a numpy array of shape (B, T, D), got {batched_stickman.shape}"
+            )
+            assert batched_stickman.shape[1] == len(
+                self.modality_configs["stickman"].delta_indices
+            ), (
+                f"Stickman key '{stickman_key}'s horizon must be {len(self.modality_configs['stickman'].delta_indices)}. Got {batched_stickman.shape[1]}"
+            )
 
     def _get_action(
         self, observation: dict[str, Any], options: dict[str, Any] | None = None

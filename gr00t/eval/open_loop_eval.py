@@ -116,7 +116,7 @@ def parse_observation_gr00t(
     obs: dict[str, Any], modality_configs: dict[str, Any]
 ) -> dict[str, Any]:
     new_obs = {}
-    for modality in ["video", "state", "language"]:
+    for modality in ["video", "state", "language", "stickman"]:
         new_obs[modality] = {}
         for key in modality_configs[modality].modality_keys:
             if modality == "language":
@@ -149,6 +149,7 @@ def evaluate_single_trajectory(
     save_action_json_path=None,
     save_gt_action_json_path=None,
     save_state_json_path=None,
+    save_stickman_npy_path=None,
 ):
     # Ensure steps doesn't exceed trajectory length
     traj = loader[traj_id]
@@ -157,6 +158,20 @@ def evaluate_single_trajectory(
     logging.info(
         f"Using {actual_steps} steps (requested: {steps}, trajectory length: {traj_length})"
     )
+
+    # Save stickman annotation data as npy (same across the sequence, take first step only)
+    if "stickman" in loader.modality_configs:
+        stickman_keys = loader.modality_configs["stickman"].modality_keys
+        stickman_first_step = np.concatenate(
+            [np.atleast_1d(np.array(traj[f"stickman.{key}"].iloc[0])) for key in stickman_keys],
+            axis=0,
+        )
+        stickman_npy_path = Path(
+            save_stickman_npy_path or f"./open_loop_eval/traj_{traj_id}_stickman.npy"
+        )
+        stickman_npy_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(stickman_npy_path, stickman_first_step)
+        logging.info(f"Saved stickman annotations to {stickman_npy_path}")
 
     pred_action_across_time = []
     state_input_across_steps = []
@@ -179,6 +194,8 @@ def evaluate_single_trajectory(
             obs[f"video.{k}"] = np.array(v)  # (T, H, W, C)
         for language_key in loader.modality_configs["language"].modality_keys:
             obs[language_key] = data_point.text
+        for k, v in data_point.stickman.items():
+            obs[f"stickman.{k}"] = v  # (T, D)
 
         # Collect state input for this inference step
         state_entry = {"step": step_count}
@@ -223,7 +240,9 @@ def evaluate_single_trajectory(
     logging.info(f"Saved predicted actions to {json_path}")
 
     # Save ground truth actions to JSON
-    gt_json_path = Path(save_gt_action_json_path or f"./open_loop_eval/traj_{traj_id}_gt_actions.json")
+    gt_json_path = Path(
+        save_gt_action_json_path or f"./open_loop_eval/traj_{traj_id}_gt_actions.json"
+    )
     gt_json_path.parent.mkdir(parents=True, exist_ok=True)
     with open(gt_json_path, "w") as f:
         json.dump(gt_action_across_time.tolist(), f)
@@ -311,6 +330,9 @@ class ArgsConfig:
     save_state_json_path: str | None = None
     """Path to save model input states as JSON. Each entry contains the inference step index and per-key state arrays with shape (T, D)."""
 
+    save_stickman_npy_path: str | None = None
+    """Path to save stickman annotation data as npy. Shape: (actual_steps, stickman_dim)."""
+
 
 def main(args: ArgsConfig):
     # Set up logging
@@ -382,6 +404,7 @@ def main(args: ArgsConfig):
             save_action_json_path=args.save_action_json_path,
             save_gt_action_json_path=args.save_gt_action_json_path,
             save_state_json_path=args.save_state_json_path,
+            save_stickman_npy_path=args.save_stickman_npy_path,
         )
         logging.info(f"MSE for trajectory {traj_id}: {mse}, MAE: {mae}")
         all_mse.append(mse)
