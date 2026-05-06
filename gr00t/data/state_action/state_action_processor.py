@@ -60,7 +60,7 @@ class StateActionProcessor:
                 Example: {"gr1": {"state": ModalityConfig(...), "action": ModalityConfig(...)}}
             statistics: Optional nested dict with structure:
                 {embodiment_tag: {modality: {joint_group: {stat_type: values}}}}
-                where modality in ["state", "action", "relative_action"]
+                where modality in ["state", "action", "stickman", "relative_action"]
                 and stat_type in ["min", "max", "mean", "std", "q01", "q99"]
                 Example: {"gr1": {"state": {"left_arm": {"min": [...], "max": [...], ...}}}}
             use_percentiles: Whether to use percentiles (q01/q99) instead of min/max
@@ -114,7 +114,7 @@ class StateActionProcessor:
         for embodiment_tag in self.statistics:
             self.norm_params[embodiment_tag] = {}
 
-            for modality in ["state", "action"]:
+            for modality in ["state", "action", "stickman"]:
                 if modality not in self.statistics[embodiment_tag]:
                     continue
 
@@ -231,6 +231,50 @@ class StateActionProcessor:
                     normalized = np.clip(normalized, -1.0, 1.0)
 
                 normalized_values[joint_group] = normalized
+
+        return normalized_values
+
+    def apply_stickman(
+        self,
+        stickman: dict[str, np.ndarray],
+        embodiment_tag: str,
+    ) -> dict[str, np.ndarray]:
+        """
+        Apply stickman processing using the same numeric normalization strategies as state.
+
+        Args:
+            stickman: Dict mapping stickman key -> raw stickman values
+                Shape per key: (..., D) where D is stickman dimension
+            embodiment_tag: Embodiment identifier (e.g., "gr1")
+
+        Returns:
+            Dict mapping stickman key -> normalized stickman values
+        """
+        normalized_values = {}
+        stickman = deepcopy(stickman)
+        stickman_config = self.modality_configs[embodiment_tag].get("stickman")
+        if stickman_config is None:
+            raise KeyError(f"Stickman config not found for embodiment '{embodiment_tag}'")
+
+        for stickman_key in stickman_config.modality_keys:
+            if stickman_key not in stickman:
+                raise KeyError(
+                    f"Stickman key '{stickman_key}' not found in stickman dict for embodiment '{embodiment_tag}'"
+                )
+
+            params = self.norm_params[embodiment_tag]["stickman"][stickman_key]
+            if (
+                stickman_config.mean_std_embedding_keys is not None
+                and stickman_key in stickman_config.mean_std_embedding_keys
+            ):
+                normalized = normalize_values_meanstd(stickman[stickman_key], params)
+            else:
+                normalized = normalize_values_minmax(stickman[stickman_key], params)
+
+            if self.clip_outliers:
+                normalized = np.clip(normalized, -1.0, 1.0)
+
+            normalized_values[stickman_key] = normalized
 
         return normalized_values
 

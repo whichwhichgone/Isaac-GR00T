@@ -468,8 +468,8 @@ class LeRobotEpisodeLoader:
         Extract dataset statistics for normalization from loaded metadata.
 
         Constructs a nested dictionary containing statistics (mean, std, min, max, q01, q99)
-        for each joint group in state and action modalities. These statistics are used
-        by processors for data normalization during training.
+        for each joint group in state, action, and stickman modalities. These statistics
+        are used by processors for data normalization during training.
 
         Returns:
             Nested dictionary: {modality: {joint_group: {stat_type: values}}}
@@ -494,6 +494,24 @@ class LeRobotEpisodeLoader:
                     dataset_statistics[modality][joint_key][stat_type] = self.stats[stats_key][
                         stat_type
                     ][start_idx:end_idx]
+
+        if "stickman" in self.modality_configs:
+            for stickman_key in self.modality_configs["stickman"].modality_keys:
+                assert stickman_key.startswith("annotation.")
+                subkey = stickman_key.replace("annotation.", "")
+                assert subkey in self.modality_meta["annotation"], (
+                    f"Key {subkey} not found in annotation modality"
+                )
+                stickman_meta = self.modality_meta["annotation"][subkey]
+                stats_key = stickman_meta.get("original_key", stickman_key)
+                start_idx = stickman_meta.get("start", 0)
+                end_idx = stickman_meta.get("end", len(self.stats[stats_key]["mean"]))
+
+                for stat_type in self.stats[stats_key].keys():  # mean, std, min, max, q01, q99
+                    dataset_statistics["stickman"][stickman_key][stat_type] = self.stats[stats_key][
+                        stat_type
+                    ][start_idx:end_idx]
+
         stats = _to_plain_dict(dataset_statistics)
         # Directly add relative action stats
         if "relative_action" in self.stats:

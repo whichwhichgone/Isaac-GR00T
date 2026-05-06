@@ -3,9 +3,11 @@
 
 # Finetune datasets
 /examples/GR00T-WholeBodyControl/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim/
-/examples/GR00T-WholeBodyControl/G1_motion_data_lerobot/
+/examples/GR00T-WholeBodyControl/G1_motion_data_*
 /examples/GR00T-WholeBodyControl/G1_1000_lerobot/
 /examples/GR00T-WholeBodyControl/pkl_1000_lerobot*
+/examples/GR00T-WholeBodyControl/pkl_5000_lerobot*
+/examples/GR00T-WholeBodyControl/pkl_10000*
 /examples/GR00T-WholeBodyControl/G1_1000*
 /examples/LIBERO/libero_10_no_noops_1.0.0_lerobot/
 /examples/LIBERO/libero_goal_no_noops_1.0.0_lerobot/

@@ -29,8 +29,6 @@ from .image_augmentations import (
 # Suppress protobuf deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.protobuf")
 
-### Number of keypoints in the stickman representation.
-STICKMAN_NUM_KEYPOINTS = 18
 STICKMAN_TOKEN = "<|fim_pad|>"
 
 ### Mapping from embodiment tag to projector index.
@@ -129,7 +127,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         model_type: Literal["eagle"] = "eagle",
         max_state_dim: int = 29,
         max_action_dim: int = 29,
-        max_stickman_dim: int = 18,
+        max_stickman_dim: int = 900,
         apply_sincos_state_encoding: bool = False,
         max_action_horizon: int = 40,
         use_albumentations: bool = False,
@@ -393,10 +391,15 @@ class Gr00tN1d6Processor(BaseProcessor):
         stickman_token_count = 0
         if stickman_data:
             stickman_keys = self.modality_configs[embodiment_tag.value]["stickman"].modality_keys
-            stickman = torch.cat(
-                [torch.from_numpy(stickman_data[key]) for key in stickman_keys], dim=-1
+            normalized_stickman = self.state_action_processor.apply_stickman(
+                stickman=stickman_data,
+                embodiment_tag=embodiment_tag.value,
             )
-            stickman = stickman.reshape(-1, STICKMAN_NUM_KEYPOINTS)
+            stickman = torch.cat(
+                [torch.from_numpy(normalized_stickman[key]) for key in stickman_keys], dim=-1
+            )
+            if stickman.ndim == 1:
+                stickman = stickman.unsqueeze(0)
             stickman_dim = stickman.shape[1]
             if stickman_dim > self.max_stickman_dim:
                 raise ValueError(

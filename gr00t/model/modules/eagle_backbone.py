@@ -18,7 +18,7 @@ class EagleBackbone(torch.nn.Module):
         load_bf16: bool = False,
         tune_top_llm_layers: int = 0,
         trainable_params_fp32: bool = False,
-        max_stickman_dim: int = 18,
+        max_stickman_dim: int = 900,
         stickman_token_index: int = 151662,
         transformers_loading_kwargs: dict = {},
     ):
@@ -54,8 +54,11 @@ class EagleBackbone(torch.nn.Module):
             raise ValueError(f"Model {model_name} not supported")
 
         self.stickman_token_index = stickman_token_index
-        self.stickman_encoder = torch.nn.Linear(
-            max_stickman_dim, self.model.config.text_config.hidden_size
+        hidden_size = self.model.config.text_config.hidden_size
+        self.stickman_encoder = torch.nn.Sequential(
+            torch.nn.Linear(max_stickman_dim, hidden_size),
+            torch.nn.GELU(),
+            torch.nn.LayerNorm(hidden_size),
         )
 
         # needed since we don't use these layers. Also saves compute
@@ -120,8 +123,8 @@ class EagleBackbone(torch.nn.Module):
         stickman = vl_input.pop("stickman", None)
         if stickman is not None:
             stickman = stickman.to(
-                device=self.stickman_encoder.weight.device,
-                dtype=self.stickman_encoder.weight.dtype,
+                device=self.stickman_encoder[0].weight.device,
+                dtype=self.stickman_encoder[0].weight.dtype,
             )
             vl_input["stickman_embeds"] = self.stickman_encoder(stickman)
             vl_input["stickman_token_index"] = self.stickman_token_index
