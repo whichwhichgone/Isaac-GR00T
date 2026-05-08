@@ -1,0 +1,153 @@
+{
+    "state": {
+        "base_translation": {
+            "original_key": "observation.state",
+            "start": 0,
+            "end": 3,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "base_rotation": {
+            "original_key": "observation.state",
+            "start": 3,
+            "end": 7,
+            "rotation_type": "quaternion",
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "left_leg": {
+            "original_key": "observation.state",
+            "start": 7,
+            "end": 13,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "right_leg": {
+            "original_key": "observation.state",
+            "start": 13,
+            "end": 19,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "waist": {
+            "original_key": "observation.state",
+            "start": 19,
+            "end": 22,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "left_arm": {
+            "original_key": "observation.state",
+            "start": 22,
+            "end": 29,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "right_arm": {
+            "original_key": "observation.state",
+            "start": 29,
+            "end": 36,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        }
+    },
+    "action": {
+        "base_translation": {
+            "original_key": "action",
+            "start": 0,
+            "end": 3,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "base_rotation": {
+            "original_key": "action",
+            "start": 3,
+            "end": 7,
+            "rotation_type": "quaternion",
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "left_leg":{
+            "original_key": "action",
+            "start": 7,
+            "end": 13,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "right_leg":{
+            "original_key": "action",
+            "start": 13,
+            "end": 19,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "waist":{
+            "original_key": "action",
+            "start": 19,
+            "end": 22,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "left_arm":{
+            "original_key": "action",
+            "start": 22,
+            "end": 29,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        },
+        "right_arm":{
+            "original_key": "action",
+            "start": 29,
+            "end": 36,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        }
+    },
+    "video": {
+        "ego_view": {
+            "original_key": "observation.images.head_img"
+        },
+        "left_wrist_view": {
+            "original_key": "observation.images.left_wrist_img"
+        },
+        "right_wrist_view": {
+            "original_key": "observation.images.right_wrist_img"
+        }
+    },
+    "annotation": {
+        "human.task_description": {
+            "original_key": "task_index"
+        },
+        "human.stickman": {
+            "original_key": "task_vis_stickman"
+        }
+    }
+}
+
+    

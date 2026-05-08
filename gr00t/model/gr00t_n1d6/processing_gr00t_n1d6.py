@@ -42,6 +42,9 @@ EMBODIMENT_TAG_TO_PROJECTOR_INDEX = {
     "oxe_widowx": 1,
     "oxe_droid": 16,
     "unitree_g1_29dof": 10,
+    "unitree_g1_29dof_single_view": 11,
+    "unitree_g1_29dof_single_view_downsampling": 12,
+    "unitree_g1_29dof_single_view_downsampling_concat": 14,
 }
 
 

@@ -61,3 +61,7 @@ class EmbodimentTag(Enum):
     """
 
     UNITREE_G1_29DOF = "unitree_g1_29dof"
+    UNITREE_G1_29DOF_SINGLE_VIEW = "unitree_g1_29dof_single_view"
+    UNITREE_G1_29DOF_SINGLE_VIEW_DOWNSAMPLING = "unitree_g1_29dof_single_view_downsampling"
+    UNITREE_G1_29DOF_SINGLE_VIEW_DOWNSAMPLING_CONCAT = "unitree_g1_29dof_single_view_downsampling_concat"
+
