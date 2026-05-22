@@ -75,10 +75,12 @@ if __name__ == "__main__":
     config.model.use_relative_action = True
 
     config.training.start_from_checkpoint = ft_config.base_model_path
+    config.training.init_model_from = ft_config.init_model_from
     config.training.optim = "adamw_torch"
     config.training.global_batch_size = ft_config.global_batch_size
     config.training.dataloader_num_workers = ft_config.dataloader_num_workers
     config.training.learning_rate = ft_config.learning_rate
+    config.training.stickman_encoder_learning_rate = ft_config.stickman_encoder_learning_rate
     config.training.gradient_accumulation_steps = ft_config.gradient_accumulation_steps
     config.training.output_dir = ft_config.output_dir
     config.training.save_steps = ft_config.save_steps

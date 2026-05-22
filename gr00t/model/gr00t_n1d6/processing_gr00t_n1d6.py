@@ -28,7 +28,7 @@ from .image_augmentations import (
 
 # Suppress protobuf deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.protobuf")
-
+STICKMAN_NUM_KEYPOINTS = 18
 STICKMAN_TOKEN = "<|fim_pad|>"
 
 ### Mapping from embodiment tag to projector index.
@@ -127,7 +127,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         model_type: Literal["eagle"] = "eagle",
         max_state_dim: int = 29,
         max_action_dim: int = 29,
-        max_stickman_dim: int = 900,
+        max_stickman_dim: int = 18,
         apply_sincos_state_encoding: bool = False,
         max_action_horizon: int = 40,
         use_albumentations: bool = False,
@@ -273,11 +273,11 @@ class Gr00tN1d6Processor(BaseProcessor):
         conversation_content = []
         if language.strip():
             conversation_content.append({"type": "text", "text": language})
-        conversation_content.extend({"type": "image", "image": img} for img in pil_images)
         if stickman_token_count > 0:
             conversation_content.append(
                 {"type": "text", "text": STICKMAN_TOKEN * stickman_token_count}
             )
+        conversation_content.extend({"type": "image", "image": img} for img in pil_images)
         conversation = [
             {
                 "role": "user",
@@ -398,8 +398,7 @@ class Gr00tN1d6Processor(BaseProcessor):
             stickman = torch.cat(
                 [torch.from_numpy(normalized_stickman[key]) for key in stickman_keys], dim=-1
             )
-            if stickman.ndim == 1:
-                stickman = stickman.unsqueeze(0)
+            stickman = stickman.reshape(-1, STICKMAN_NUM_KEYPOINTS)
             stickman_dim = stickman.shape[1]
             if stickman_dim > self.max_stickman_dim:
                 raise ValueError(

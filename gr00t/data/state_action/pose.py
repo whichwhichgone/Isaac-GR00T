@@ -709,3 +709,53 @@ class EndEffectorPose(Pose):
         return np.allclose(self._translation, other._translation) and np.allclose(
             self._rotation.as_quat(), other._rotation.as_quat()
         )
+
+
+class ImuPose(Pose):
+    pose_type = "imu"
+
+    def __init__(
+        self,
+        imu_state: Union[list, np.ndarray],
+    ):
+        super().__init__()
+        self.imu_state = np.array(imu_state, dtype=np.float64)
+        norm = np.linalg.norm(self.imu_state)
+        if np.isclose(norm, 0.0, atol=1e-6):
+            raise ValueError(
+                f"ImuPose received a degenerate quaternion with near-zero norm={norm:.6f}. "
+                f"imu_state={self.imu_state}"
+            )
+        self.imu_state = self.imu_state / norm
+
+    def _compute_relative(self, other):
+        if self.imu_state.shape != other.imu_state.shape:
+            raise ValueError(
+                f"Cannot compute relative IMU pose: "
+                f"IMU state dimensions don't match ({self.imu_state.shape} vs {other.imu_state.shape})"
+            )
+
+        # scipy's Rotation expects quaternions in xyzw order
+        def wxyz_to_xyzw(q):
+            return np.array([q[1], q[2], q[3], q[0]])
+
+        r_ref = Rotation.from_quat(wxyz_to_xyzw(other.imu_state))
+        r_current = Rotation.from_quat(wxyz_to_xyzw(self.imu_state))
+
+        # relative = ref^{-1} * current
+        r_relative = r_ref.inv() * r_current
+        xyzw = r_relative.as_quat()
+        wxyz = np.array([xyzw[3], xyzw[0], xyzw[1], xyzw[2]])
+
+        return ImuPose(wxyz)
+
+    def copy(self) -> ImuPose:
+        return ImuPose(self.imu_state.copy())
+
+    def __repr__(self) -> str:
+        return f"ImuPose(imu_state={self.imu_state}), wxyz order"
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, ImuPose):
+            return False
+        return np.allclose(self.imu_state, other.imu_state)

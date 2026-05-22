@@ -20,8 +20,8 @@ from tqdm import tqdm
 
 from gr00t.configs.data.embodiment_configs import MODALITY_CONFIGS
 from gr00t.data.dataset.lerobot_episode_loader import LeRobotEpisodeLoader
-from gr00t.data.state_action.action_chunking import EndEffectorActionChunk, JointActionChunk
-from gr00t.data.state_action.pose import EndEffectorPose, JointPose
+from gr00t.data.state_action.action_chunking import EndEffectorActionChunk, ImuActionChunk, JointActionChunk
+from gr00t.data.state_action.pose import EndEffectorPose, ImuPose, JointPose
 from gr00t.data.types import ActionRepresentation, ActionType, EmbodimentTag, ModalityConfig
 from gr00t.data.utils import to_json_serializable
 
@@ -178,6 +178,12 @@ class RelativeActionLoader:
                     reference_frame=reference_frame
                 )
                 trajectories.append(np.stack([p.joints for p in traj.poses], dtype=np.float32))
+            elif self.action_config.type == ActionType.IMU:
+                reference_frame = ImuPose(last_state)
+                traj = ImuActionChunk([ImuPose(m) for m in actions]).relative_chunking(
+                    reference_frame=reference_frame
+                )
+                trajectories.append(np.stack([p.imu_state for p in traj.poses], dtype=np.float32))
             else:
                 raise ValueError(f"Unknown ActionType: {self.action_config.type}")
         return trajectories

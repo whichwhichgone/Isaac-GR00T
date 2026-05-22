@@ -18,7 +18,7 @@ class EagleBackbone(torch.nn.Module):
         load_bf16: bool = False,
         tune_top_llm_layers: int = 0,
         trainable_params_fp32: bool = False,
-        max_stickman_dim: int = 900,
+        max_stickman_dim: int = 18,
         stickman_token_index: int = 151662,
         transformers_loading_kwargs: dict = {},
     ):
@@ -58,8 +58,12 @@ class EagleBackbone(torch.nn.Module):
         self.stickman_encoder = torch.nn.Sequential(
             torch.nn.Linear(max_stickman_dim, hidden_size),
             torch.nn.GELU(),
+            torch.nn.Linear(hidden_size, hidden_size),
             torch.nn.LayerNorm(hidden_size),
         )
+
+        # Learnable gate (tanh-bounded), starts at 0 so stickman influence ramps in smoothly.
+        self.stickman_gate = torch.nn.Parameter(torch.zeros(1))
 
         # needed since we don't use these layers. Also saves compute
         while len(self.model.language_model.model.layers) > select_layer:
@@ -126,7 +130,7 @@ class EagleBackbone(torch.nn.Module):
                 device=self.stickman_encoder[0].weight.device,
                 dtype=self.stickman_encoder[0].weight.dtype,
             )
-            vl_input["stickman_embeds"] = self.stickman_encoder(stickman)
+            vl_input["stickman_embeds"] = self.stickman_gate.tanh() * self.stickman_encoder(stickman)
             vl_input["stickman_token_index"] = self.stickman_token_index
         outputs = self.model(**vl_input, output_hidden_states=True)
         outputs = outputs["hidden_states"][-1]

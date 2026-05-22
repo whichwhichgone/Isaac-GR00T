@@ -24,6 +24,7 @@ class ActionRepresentation(Enum):
 class ActionType(Enum):
     EEF = "eef"
     NON_EEF = "non_eef"
+    IMU = "imu"
 
 
 class ActionFormat(Enum):

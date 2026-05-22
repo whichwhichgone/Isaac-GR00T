@@ -360,47 +360,12 @@ MODALITY_CONFIGS = {
             ],
         ),
         "action": ModalityConfig(
-            delta_indices=list(range(30)),
+            delta_indices=list(range(50)),
             modality_keys=[
-                "base_rotation",
-                "left_leg",
-                "right_leg",
-                "waist",
-                "left_arm",
-                "right_arm",
+                "mocap",
             ],
             action_configs=[
                 # base_rotation
-                ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.NON_EEF,
-                    format=ActionFormat.DEFAULT,
-                ),
-                # left_leg
-                ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.NON_EEF,
-                    format=ActionFormat.DEFAULT,
-                ),
-                # right_leg
-                ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.NON_EEF,
-                    format=ActionFormat.DEFAULT,
-                ),
-                # waist
-                ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.NON_EEF,
-                    format=ActionFormat.DEFAULT,
-                ),
-                # left_arm
-                ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.NON_EEF,
-                    format=ActionFormat.DEFAULT,
-                ),
-                # right_arm
                 ActionConfig(
                     rep=ActionRepresentation.ABSOLUTE,
                     type=ActionType.NON_EEF,

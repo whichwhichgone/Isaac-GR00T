@@ -1,6 +1,6 @@
 from typing import Generic, List, Optional, Sequence, TypeVar, Union
 
-from gr00t.data.state_action.pose import EndEffectorPose, JointPose, Pose
+from gr00t.data.state_action.pose import EndEffectorPose, ImuPose, JointPose, Pose
 from gr00t.data.types import ActionFormat
 import numpy as np
 from numpy.typing import NDArray
@@ -663,3 +663,170 @@ class EndEffectorActionChunk(ActionChunk[EndEffectorPose]):
             return self.to_translation_rotvec()
         else:
             raise ValueError(f"Unsupported action format: {action_format}")
+
+
+class ImuActionChunk(ActionChunk[ImuPose]):
+    def __init__(
+        self,
+        poses: Sequence[ImuPose],
+        times: Optional[Union[Sequence[float], NDArray[np.float64]]] = None,
+    ):
+        """
+        Initialize an IMU trajectory from a list of IMU poses.
+
+        Args:
+            poses: Sequence of ImuPose objects
+            times: Optional sequence of timestamps for each pose
+
+        Raises:
+            TypeError: If poses are not all ImuPose objects
+        """
+        # Validate all poses are ImuPose
+        if not all(isinstance(p, ImuPose) for p in poses):
+            raise TypeError("All poses must be ImuPose objects for ImuActionChunk")
+
+        super().__init__(poses, times)
+
+    def interpolate(
+        self,
+        num_points: Optional[int] = None,
+        times: Optional[NDArray[np.float64]] = None,
+    ) -> "ImuActionChunk":
+        """
+        Interpolate the IMU action chunking using SLERP on quaternions.
+
+        Args:
+            num_points: Number of evenly-spaced points to generate (including endpoints).
+                       Only used if times is None.
+            times: Specific timestamps at which to interpolate. If provided,
+                  num_points is ignored.
+
+        Returns:
+            A new ImuActionChunk with interpolated poses
+
+        Raises:
+            ValueError: If neither num_points nor times is provided, or if
+                       interpolation times are outside the trajectory range
+        """
+        if num_points is None and times is None:
+            raise ValueError("Must provide either num_points or times")
+
+        if len(self._poses) < 2:
+            raise ValueError("Need at least 2 poses for interpolation")
+
+        timestamps = self._times.copy()
+
+        # Convert wxyz -> xyzw for scipy Rotation
+        quats_xyzw = np.array(
+            [[p.imu_state[1], p.imu_state[2], p.imu_state[3], p.imu_state[0]] for p in self._poses]
+        )
+
+        # Remove non-monotonic timestamps
+        drop_indices = [
+            idx for idx in range(1, len(timestamps)) if timestamps[idx] <= timestamps[idx - 1]
+        ]
+        if drop_indices:
+            for idx in drop_indices:
+                print(
+                    f"Dropping timestamp pair - Previous: {timestamps[idx - 1]}, "
+                    f"Current: {timestamps[idx]} at index {idx}"
+                )
+            timestamps = np.delete(timestamps, drop_indices)
+            quats_xyzw = np.delete(quats_xyzw, drop_indices, axis=0)
+
+        if len(timestamps) < 2:
+            raise ValueError("Need at least 2 poses with monotonic timestamps for interpolation")
+
+        rotations = Rotation.from_quat(quats_xyzw)
+        slerp = Slerp(timestamps, rotations)
+
+        if times is None:
+            assert num_points is not None
+            interp_times = np.linspace(timestamps[0], timestamps[-1], num_points)
+        else:
+            interp_times = np.array(times, dtype=np.float64)
+
+        if np.any(interp_times < timestamps[0]) or np.any(interp_times > timestamps[-1]):
+            raise ValueError(
+                f"Interpolation times must be within [{timestamps[0]}, {timestamps[-1]}]"
+            )
+
+        interp_rotations = slerp(interp_times)
+        interp_quats_xyzw = interp_rotations.as_quat()  # (N, 4) xyzw
+
+        # Convert back to wxyz
+        interpolated_poses = [
+            ImuPose(np.array([q[3], q[0], q[1], q[2]])) for q in interp_quats_xyzw
+        ]
+
+        return ImuActionChunk(interpolated_poses, times=interp_times)
+
+    def to_array(self) -> NDArray[np.float64]:
+        """
+        Convert trajectory to array of IMU states.
+
+        Returns:
+            Array with shape (N, 4)
+        """
+        return np.array([pose.imu_state for pose in self._poses])
+
+    def to_absolute_chunking(self, reference_frame: ImuPose) -> "ImuActionChunk":
+
+        def _reconstruct_absolute(ref_frame: ImuPose, rel_pose: ImuPose):
+            if rel_pose.imu_state.shape != ref_frame.imu_state.shape:
+                raise ValueError(
+                    f"Cannot compute absolute IMU pose: "
+                    f"IMU state dimensions don't match ({rel_pose.imu_state.shape} vs {ref_frame.imu_state.shape})"
+                )
+
+            # scipy's Rotation expects quaternions in xyzw order
+            def wxyz_to_xyzw(q):
+                return np.array([q[1], q[2], q[3], q[0]])
+
+            r_ref = Rotation.from_quat(wxyz_to_xyzw(ref_frame.imu_state))
+            r_relative = Rotation.from_quat(wxyz_to_xyzw(rel_pose.imu_state))
+
+            # absolute = ref * relative
+            r_absolute = r_ref * r_relative
+            xyzw = r_absolute.as_quat()
+            wxyz = np.array([xyzw[3], xyzw[0], xyzw[1], xyzw[2]])
+
+            return ImuPose(wxyz)
+
+        if not self._poses:
+            return ImuActionChunk([], times=[])
+
+        if len(self._poses[0].imu_state) != len(reference_frame.imu_state):
+            raise ValueError(
+                f"Cannot apply relative trajectory: "
+                f"IMU state dimensions don't match ({len(self._poses[0].imu_state)} vs {len(reference_frame.imu_state)})"
+            )
+
+        # Add each relative pose to the reference frame
+        absolute_poses: List[ImuPose] = []
+        for relative_pose in self._poses:
+            absolute_pose = _reconstruct_absolute(reference_frame, relative_pose)
+            absolute_poses.append(absolute_pose)
+
+        return ImuActionChunk(absolute_poses, times=self.times)
+
+    def to(self, action_format):
+        """
+        Convert trajectory to the desired format.
+
+        Args:
+            action_format: The desired output format
+
+        Returns:
+            Array in the requested format
+
+        Raises:
+            ValueError: If the action format is not supported for joint trajectories
+        """
+        if action_format == ActionFormat.DEFAULT:
+            return self.to_array()
+        else:
+            raise ValueError(
+                f"ActionFormat {action_format} is not supported for ImuActionChunk. "
+                f"Only {ActionFormat.DEFAULT} is supported."
+            )

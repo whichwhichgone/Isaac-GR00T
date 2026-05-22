@@ -66,8 +66,14 @@ class Gr00tN1d6Pipeline(ModelPipeline):
         # Build transformers loading kwargs from training config
 
         if self.config.training.start_from_checkpoint is not None:
+            model_path = (
+                self.config.training.init_model_from
+                or self.config.training.start_from_checkpoint
+            )
+            if self.config.training.init_model_from is not None:
+                logging.info(f"Loading model weights from {model_path} (processor still from base)")
             model, loading_info = AutoModel.from_pretrained(
-                self.config.training.start_from_checkpoint,
+                model_path,
                 tune_llm=self.config.model.tune_llm,
                 tune_visual=self.config.model.tune_visual,
                 tune_projector=self.config.model.tune_projector,

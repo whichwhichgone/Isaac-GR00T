@@ -190,11 +190,79 @@ class Gr00tTrainer(Trainer):
         """
         self.action_offset = kwargs.pop("action_offset", None)
         self.multiprocessing_context = kwargs.pop("multiprocessing_context", "fork")
+        self.stickman_encoder_learning_rate = kwargs.pop("stickman_encoder_learning_rate", None)
         super().__init__(
             *args,
             **kwargs,
             # compute_metrics=partial(compute_eval_accuracy, action_offset=self.action_offset),
         )
+
+    def create_optimizer(self):
+        """Create optimizer with an optional standalone LR for stickman encoder."""
+        if self.stickman_encoder_learning_rate is None:
+            return super().create_optimizer()
+
+        if self.optimizer is None:
+            opt_model = self.model
+            # Exclude the scalar stickman_gate from weight decay so it can ramp up freely.
+            decay_parameters = set(self.get_decay_parameter_names(opt_model)) - {
+                "backbone.stickman_gate"
+            }
+            stickman_prefix = "backbone.stickman_encoder."
+
+            def is_stickman_param(name: str) -> bool:
+                return name.startswith(stickman_prefix) or name == "backbone.stickman_gate"
+
+            optimizer_grouped_parameters = [
+                {
+                    "params": [
+                        p
+                        for n, p in opt_model.named_parameters()
+                        if p.requires_grad and is_stickman_param(n) and n in decay_parameters
+                    ],
+                    "weight_decay": self.args.weight_decay,
+                    "lr": self.stickman_encoder_learning_rate,
+                },
+                {
+                    "params": [
+                        p
+                        for n, p in opt_model.named_parameters()
+                        if p.requires_grad and is_stickman_param(n) and n not in decay_parameters
+                    ],
+                    "weight_decay": 0.0,
+                    "lr": self.stickman_encoder_learning_rate,
+                },
+                {
+                    "params": [
+                        p
+                        for n, p in opt_model.named_parameters()
+                        if p.requires_grad
+                        and not is_stickman_param(n)
+                        and n in decay_parameters
+                    ],
+                    "weight_decay": self.args.weight_decay,
+                },
+                {
+                    "params": [
+                        p
+                        for n, p in opt_model.named_parameters()
+                        if p.requires_grad
+                        and not is_stickman_param(n)
+                        and n not in decay_parameters
+                    ],
+                    "weight_decay": 0.0,
+                },
+            ]
+            optimizer_grouped_parameters = [
+                group for group in optimizer_grouped_parameters if len(group["params"]) > 0
+            ]
+
+            optimizer_cls, optimizer_kwargs = self.get_optimizer_cls_and_kwargs(
+                self.args, opt_model
+            )
+            self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
+
+        return self.optimizer
 
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         # Hide epoch from logged metrics as it's misleading for Iterable datasets.

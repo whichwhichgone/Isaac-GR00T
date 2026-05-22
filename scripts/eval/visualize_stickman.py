@@ -161,8 +161,8 @@ class StickmanVisualizer:
 
 
 if __name__ == "__main__":
-    npy_path = "open_loop_eval/traj_2_stickman.npy"
-    gif_path = "open_loop_eval/traj_2_stickman.gif"
+    npy_path = "open_loop_eval/traj_0_stickman.npy"
+    gif_path = "open_loop_eval/traj_0_stickman.gif"
     kp_xyz = load_stickman(npy_path).reshape(-1, 6, 3)  # (50, 6, 3)
     viz = StickmanVisualizer(kp_xyz, title=npy_path, fps=10.0)
     viz.save_gif(gif_path)

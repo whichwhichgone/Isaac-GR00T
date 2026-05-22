@@ -10,14 +10,9 @@ Handles:
 
 from copy import deepcopy
 
-from gr00t.configs.data.embodiment_configs import (
-    ActionFormat,
-    ActionRepresentation,
-    ActionType,
-    ModalityConfig,
-)
-from gr00t.data.state_action.action_chunking import EndEffectorActionChunk, JointActionChunk
-from gr00t.data.state_action.pose import EndEffectorPose, JointPose
+from gr00t.configs.data.embodiment_configs import ActionFormat, ActionRepresentation, ActionType, ModalityConfig
+from gr00t.data.state_action.action_chunking import EndEffectorActionChunk, ImuActionChunk, JointActionChunk
+from gr00t.data.state_action.pose import EndEffectorPose, ImuPose, JointPose
 from gr00t.data.utils import (
     apply_sin_cos_encoding,
     nested_dict_to_numpy,
@@ -666,6 +661,10 @@ class StateActionProcessor:
             action_chunking = JointActionChunk([JointPose(m) for m in action])
             reference_frame = JointPose(reference_state)
 
+        elif action_type == ActionType.IMU:
+            action_chunking = ImuActionChunk([ImuPose(m) for m in action])
+            reference_frame = ImuPose(reference_state)
+
         else:
             raise ValueError(f"Unknown ActionType: {action_type}")
 
@@ -695,6 +694,10 @@ class StateActionProcessor:
         elif action_type == ActionType.NON_EEF:
             rel_action = JointActionChunk([JointPose(pose) for pose in action])
             reference_frame = JointPose(reference_state)
+        
+        elif action_type == ActionType.IMU:
+            rel_action = ImuActionChunk([ImuPose(pose) for pose in action])
+            reference_frame = ImuPose(reference_state)
 
         else:
             raise ValueError(f"Unknown ActionType: {action_type}")
