@@ -530,7 +530,7 @@ MODALITY_CONFIGS = {
             action_configs=[
                 # base_translation
                 ActionConfig(
-                    rep=ActionRepresentation.RELATIVE,
+                    rep=ActionRepresentation.ABSOLUTE,
                     type=ActionType.NON_EEF,
                     format=ActionFormat.DEFAULT,
                 ),
@@ -655,6 +655,45 @@ MODALITY_CONFIGS = {
             modality_keys=["annotation.human.task_description"],
         ),
     },
+    "unitree_g1_15x7_mocap":{    
+        "video": ModalityConfig(
+                delta_indices=[0],
+                modality_keys=["ego_view"],
+            ),
+        "state": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=[
+                "base_rotation",
+                "left_leg",
+                "right_leg",
+                "waist",
+                "left_arm",
+                "right_arm",
+            ],
+        ),
+        "action": ModalityConfig(
+            delta_indices=list(range(50)),
+            modality_keys=[
+                "mocap",
+            ],
+            action_configs=[
+                # base_rotation
+                ActionConfig(
+                    rep=ActionRepresentation.ABSOLUTE,
+                    type=ActionType.NON_EEF,
+                    format=ActionFormat.DEFAULT,
+                ),
+            ],
+        ),
+        "language": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=["annotation.human.task_description"],
+        ),
+        "stickman": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=["annotation.human.stickman"],
+        ),
+    }
 }
 
 

@@ -1,18 +1,9 @@
 {
     "state": {
-        "base_translation": {
-            "original_key": "observation.state",
-            "start": 0,
-            "end": 3,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
         "base_rotation": {
             "original_key": "observation.state",
-            "start": 3,
-            "end": 7,
+            "start": 0,
+            "end": 6,
             "rotation_type": "quaternion",
             "absolute": true,
             "dtype": "float64",
@@ -20,8 +11,8 @@
         },
         "left_leg": {
             "original_key": "observation.state",
-            "start": 7,
-            "end": 13,
+            "start": 6,
+            "end": 12,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -29,8 +20,8 @@
         },
         "right_leg": {
             "original_key": "observation.state",
-            "start": 13,
-            "end": 19,
+            "start": 12,
+            "end": 18,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -38,8 +29,8 @@
         },
         "waist": {
             "original_key": "observation.state",
-            "start": 19,
-            "end": 22,
+            "start": 18,
+            "end": 21,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -47,8 +38,8 @@
         },
         "left_arm": {
             "original_key": "observation.state",
-            "start": 22,
-            "end": 29,
+            "start": 21,
+            "end": 28,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -56,8 +47,8 @@
         },
         "right_arm": {
             "original_key": "observation.state",
-            "start": 29,
-            "end": 36,
+            "start": 28,
+            "end": 35,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -65,64 +56,10 @@
         }
     },
     "action": {
-        "base_translation": {
+        "mocap": {
             "original_key": "action",
             "start": 0,
-            "end": 3,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "base_rotation": {
-            "original_key": "action",
-            "start": 3,
-            "end": 7,
-            "rotation_type": "quaternion",
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "left_leg":{
-            "original_key": "action",
-            "start": 7,
-            "end": 13,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "right_leg":{
-            "original_key": "action",
-            "start": 13,
-            "end": 19,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "waist":{
-            "original_key": "action",
-            "start": 19,
-            "end": 22,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "left_arm":{
-            "original_key": "action",
-            "start": 22,
-            "end": 29,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "right_arm":{
-            "original_key": "action",
-            "start": 29,
-            "end": 36,
+            "end": 99,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -132,12 +69,6 @@
     "video": {
         "ego_view": {
             "original_key": "observation.images.head_img"
-        },
-        "left_wrist_view": {
-            "original_key": "observation.images.left_wrist_img"
-        },
-        "right_wrist_view": {
-            "original_key": "observation.images.right_wrist_img"
         }
     },
     "annotation": {

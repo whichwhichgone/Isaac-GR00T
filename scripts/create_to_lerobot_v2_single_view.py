@@ -23,6 +23,7 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from multiprocessing import Pool
+from scipy.spatial.transform import Rotation as R
 # sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # from visualize_stickman import load_stickman
 
@@ -40,10 +41,12 @@ CAMERAS_MAP = {"head_img": "front"}
 
 MODALITY = "/liujinxin/liyifan/Isaac-GR00T/scripts/modality.json"
 DATASET_DIR = [
-               "/liujinxin/dataset/piper/G1/0428_tidy_up_g1"
+               "/liujinxin/dataset/piper/G1/0428_tidy_up_g1",
                ]
-REPO_NAME = "2026_0428_tidy_up_g1"  # Name of the output dataset, also used for the Hugging Face Hub
+REPO_NAME = "2026-0509_tidy_up_g1_rel_imu_2"  # Name of the output dataset, also used for the Hugging Face Hub
 OUTPUT_DIR = LEROBOT_HOME/REPO_NAME
+
+USE_RELATIVE_IMU = True
 
 FEATURES = {
     "observation.state": {
@@ -112,14 +115,79 @@ def load_image(image_path, image_type):
     return np.array(canvas)
 
 
+def _normalize_quat_wxyz(quat_wxyz: np.ndarray, eps:float = 1e-12):
+    """
+    Normalize quanternion in wxyz format
+
+    Args:
+        q: quanternion, shape (4,, order [w, x, y, z]
+    
+    Returns:
+        normalized quaternion, shape (4,), dtype float32
+    """
+    quat_wxyz = np.asarray(quat_wxyz, dtype=np.float32).reshape(4)
+    norm = np.linalg.norm(quat_wxyz)
+    if norm < eps:
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    return quat_wxyz / norm
+
+
+def _wxyz_to_xyzw(quat_wxyz: np.ndarray):
+    w, x, y, z = quat_wxyz
+    quat_xyzw = np.array([x, y, z, w], dtype=np.float32)
+    return quat_xyzw
+
+
+def _xyzw_to_wxyz(quat_xyzw: np.ndarray):
+    x, y, z, w = quat_xyzw
+    quat_wxyz = np.array([w, x, y, z], dtype=np.float32)
+    return quat_wxyz
+
+
+def get_relative_imu(prev_quat_wxyz, cur_quat_wxyz):
+    """
+    Convert absolute imu to relative
+    [
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+    ]
+    """
+    prev_quat_wxyz = _normalize_quat_wxyz(prev_quat_wxyz)
+    cur_quat_wxyz = _normalize_quat_wxyz(cur_quat_wxyz)
+
+    # Scipy库中imu顺序为xyzw
+    prev_R = R.from_quat(_wxyz_to_xyzw(prev_quat_wxyz))
+    cur_R = R.from_quat(_wxyz_to_xyzw(cur_quat_wxyz))
+    
+    rel_R = prev_R.inv() * cur_R
+    
+    quat_rel_wxyz = _xyzw_to_wxyz(rel_R.as_quat())
+    quat_rel_wxyz = _normalize_quat_wxyz(quat_rel_wxyz)
+
+    return quat_rel_wxyz
+
+
 def get_episode(data:dict, root_path: str):
 
     def get_state(data, idx):
-        root_rot = np.asarray(data[idx]["imu"], dtype=np.float32) # (1, 4)
+        root_rot = np.asarray(data[idx]["imu"], dtype=np.float32) # (4,)
         root_trans = np.zeros(3, dtype=np.float32)
         joint_pos = np.asarray(data[idx]["body_joint"], dtype=np.float32)
         state = np.concatenate([root_trans, root_rot, joint_pos], axis=0)
         return state
+
+    def get_action(data, idx):
+        root_rot = np.asarray(data[idx]["imu"], dtype=np.float32) # (4,)
+        if USE_RELATIVE_IMU:
+            current_root_rot = root_rot.copy()
+            prev_root_rot = np.asarray(data[idx-1]["imu"], dtype=np.float32)
+            root_rot = get_relative_imu(prev_root_rot, current_root_rot)
+        root_trans = np.zeros(3, dtype=np.float32)
+        joint_pos = np.asarray(data[idx]["body_joint"], dtype=np.float32)
+        action = np.concatenate([root_trans, root_rot, joint_pos], axis=0)
+        return action
 
     episode = []
     task = data[0]["task"][0]
@@ -133,7 +201,7 @@ def get_episode(data:dict, root_path: str):
             frame[f"observation.images.{lerobot_key}"] = image
 
         state = get_state(data, idx)
-        action = get_state(data, idx+1)
+        action = get_action(data, idx+1)
         frame["observation.state"] = state
         frame["action"] = action
         frame["task_vis_stickman"] = np.zeros(18, dtype=np.float32)
@@ -178,7 +246,6 @@ if __name__ == "__main__":
         image_writer_processes=8,
     )
 
-    ep_idx = 0
     file_pool = []
     for input_dir in DATASET_DIR:
         json_files = sorted(glob.glob(os.path.join(input_dir, "**/data.json"), recursive=True))
@@ -187,9 +254,9 @@ if __name__ == "__main__":
             root_path = os.path.dirname(json_path)
             file = os.path.basename(json_path)
             file_pool.append((root_path,file))
-    print(f"Found{len(file_pool)} episodes")
+    print(f"Found {len(file_pool)} episodes")
 
-    with Pool(processes=12) as pool:
+    with Pool(processes=6) as pool:
         for episode in pool.imap_unordered(process_file, file_pool, chunksize=2):
             if not episode or isinstance(episode, str):
                 print(f"跳过无效结果:{episode}")

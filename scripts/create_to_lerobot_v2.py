@@ -200,7 +200,6 @@ if __name__ == "__main__":
                 dataset.add_frame(frame)
             print('#####step ', task)
             dataset.save_episode(task=task)
-    dataset.consolidate(run_compute_stats=True)
 
     meta_path = os.path.join(output_dir, "meta")
     shutil.copy(modality_path, meta_path)

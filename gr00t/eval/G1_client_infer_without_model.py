@@ -903,6 +903,16 @@ def canonicalize_quat_wxyz(q, ref=None):
     return normalize_quat_wxyz(q)
 
 
+def quat_inv_wxyz(q):
+    """
+    四元数逆。
+    q: [w, x, y, z]
+    对单位四元数，逆就是共轭。
+    """
+    q = normalize_quat_wxyz(q)
+    return np.array([q[0], -q[1], -q[2], -q[3]], dtype=np.float64)
+
+
 def convert_rel_to_abs(q_rel, q_init):
     """
     将模型输出的相对 IMU chunk 还原为绝对 IMU chunk。
@@ -920,7 +930,7 @@ def convert_rel_to_abs(q_rel, q_init):
 
         q_init:
             当前 observation.state["base_rotation"]
-            shape:
+            shape 通常是:
                 (4,)
 
     Returns:
@@ -957,6 +967,81 @@ def convert_rel_to_abs(q_rel, q_init):
     q_abs_seq = np.stack(q_abs_seq, axis=0).astype(np.float32)
 
     return q_abs_seq
+
+
+def get_action_from_json(data, start_idx=0, horizon=None):
+    """
+    从 json 中构造 action chunk。
+
+    返回:
+        action:
+            base_translation: (T, 3)
+            base_rotation:    (T, 4)  # 相对 IMU, rel = inv(prev) * cur
+            left_leg:         (T, 6)
+            right_leg:        (T, 6)
+            waist:            (T, 3)
+            left_arm:         (T, 7)
+            right_arm:        (T, 7)
+    """
+    episode_len = len(data)
+
+    expected_key = {
+        "left_leg": (0, 6),
+        "right_leg": (6, 12),
+        "waist": (12, 15),
+        "left_arm": (15, 22),
+        "right_arm": (22, 29),
+    }
+
+    if episode_len < 2:
+        raise ValueError(f"episode_len should be >= 2, got {episode_len}")
+
+    if start_idx < 0:
+        start_idx = 0
+
+    if horizon is None:
+        end_idx = episode_len - 1
+    else:
+        end_idx = min(start_idx + horizon, episode_len - 1)
+
+    if start_idx >= end_idx:
+        raise ValueError(
+            f"No enough data to build action: start_idx={start_idx}, end_idx={end_idx}, episode_len={episode_len}"
+        )
+
+    action = {key: [] for key in expected_key.keys()}
+    action["base_translation"] = []
+    action["base_rotation"] = []
+
+    for idx in range(start_idx, end_idx):
+        prev_step = data[idx]
+        cur_step = data[idx + 1]
+
+        body_joint = np.asarray(cur_step["body_joint"], dtype=np.float64).reshape(-1)
+        if body_joint.shape[0] != 29:
+            raise ValueError(f"body_joint should be 29-dim, got {body_joint.shape}")
+
+        for key, (s, e) in expected_key.items():
+            joint_part = body_joint[s:e]
+            action[key].append(joint_part)
+
+        action["base_translation"].append(np.zeros(3, dtype=np.float64))
+
+        cur_imu = np.asarray(cur_step["imu"], dtype=np.float64).reshape(4)
+        prev_imu = np.asarray(prev_step["imu"], dtype=np.float64).reshape(4)
+
+        cur_imu = canonicalize_quat_wxyz(cur_imu)
+        prev_imu = canonicalize_quat_wxyz(prev_imu)
+
+        rel_imu = quat_mul_wxyz(quat_inv_wxyz(prev_imu), cur_imu)
+        rel_imu = canonicalize_quat_wxyz(rel_imu)
+
+        action["base_rotation"].append(rel_imu)
+
+    for key, value in action.items():
+        action[key] = np.stack(value, axis=0).astype(np.float32)
+
+    return action
     
 
 # =========================
@@ -964,25 +1049,9 @@ def convert_rel_to_abs(q_rel, q_init):
 # =========================
 if __name__ == "__main__":
     data_json = None
-    index_data_json = 0
+
     config = tyro.cli(ClientConfig)
     body_pose = BodyPoseSubscriber()
-    print("[INFO] init camera")
-    camera = CameraSubscriber()
-    sleep(2)
-
-    client = server_client.PolicyClient(
-        host=config.host,
-        port=config.port,
-        timeout_ms=config.timeout_ms,
-        api_token=config.api_token,
-    )
-
-    if client.ping():
-        print("Server is alive!")
-    else:
-        print("Failed to connect to the server.")
-        sys.exit(1)
 
     converter = G1_29_BodyPose7WithRoot(
         urdf_path=config.urdf_path,
@@ -998,10 +1067,9 @@ if __name__ == "__main__":
     sender_thread.start()
     print("Sender thread started.")
 
-    if config.debug_mode:
-        with open(config.gt_state_path, "r") as f:
-            data_json = json.load(f)
-            episode_len = len(data_json)
+    with open(config.gt_state_path, "r") as f:
+        data_json = json.load(f)
+        episode_len = len(data_json)
 
     try:
         while True:
@@ -1018,30 +1086,16 @@ if __name__ == "__main__":
                     print(f"Pose queue is not empty (size={pose_queue.size()}), waiting ...")
                     sleep(config.infer_interval)
                     continue
-                frame = camera.get_frame()
+                frame = None
                 observation = build_observation_from_msg(
                     msg, config.task_description, frame, stickman_path=config.stickman_path
-                )
+                )    
 
-                if config.debug_mode:
-                    print(f"Using gt state data index step: {index_data_json}.")
-                    if index_data_json >= episode_len:
-                        print("index_data_json >= len(data_json)")
-                        break
+                action0 = get_action_from_json(data_json)
 
-                    step = data_json[index_data_json]
-                    observation_new = build_observation_from_step(
-                        step, config.task_description, json_path = config.gt_state_path, stickman_path=config.stickman_path
-                    )
-
-                    observation = observation_new
-                    
-                print(f"observation['state'] keys: {observation['state'].keys()}")
-                action = client.get_action(observation)
-                action0 = action[0]
                 action0['base_rotation'] = convert_rel_to_abs(action0['base_rotation'], observation["state"]["base_rotation"])
                 x36_seq, chunk_size = action0_to_x36_seq(action0)
-                index_data_json += chunk_size
+
                 pose7_seq = converter.get_current_body29_pose7_with_root(x36_seq)
 
                 # print(f"pose7_seq shape before interp: {pose7_seq.shape}")
@@ -1086,7 +1140,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Stopped by user.")
     finally:
-        camera.stop()
         sender_thread.stop()
         sender_thread.join(timeout=1.0)
         print("Sender thread stopped.")
