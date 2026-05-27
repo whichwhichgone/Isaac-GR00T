@@ -1,18 +1,9 @@
 {
     "state": {
-        "base_translation": {
-            "original_key": "observation.state",
-            "start": 0,
-            "end": 3,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
         "base_rotation": {
             "original_key": "observation.state",
-            "start": 3,
-            "end": 7,
+            "start": 0,
+            "end": 6,
             "rotation_type": "quaternion",
             "absolute": true,
             "dtype": "float64",
@@ -20,8 +11,8 @@
         },
         "left_leg": {
             "original_key": "observation.state",
-            "start": 7,
-            "end": 13,
+            "start": 6,
+            "end": 12,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -29,8 +20,8 @@
         },
         "right_leg": {
             "original_key": "observation.state",
-            "start": 13,
-            "end": 19,
+            "start": 12,
+            "end": 18,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -38,8 +29,8 @@
         },
         "waist": {
             "original_key": "observation.state",
-            "start": 19,
-            "end": 22,
+            "start": 18,
+            "end": 21,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
@@ -47,53 +38,6 @@
         },
         "left_arm": {
             "original_key": "observation.state",
-            "start": 22,
-            "end": 29,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "right_arm": {
-            "original_key": "observation.state",
-            "start": 29,
-            "end": 36,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        }
-    },
-    "action": {
-        "root": {
-            "original_key": "action",
-            "start": 0,
-            "end": 7,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "left_hip_yaw_joint": {
-            "original_key": "action",
-            "start": 7,
-            "end": 14,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "left_knee_joint": {
-            "original_key": "action",
-            "start": 14,
-            "end": 21,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "left_ankle_pitch_joint": {
-            "original_key": "action",
             "start": 21,
             "end": 28,
             "rotation_type": null,
@@ -101,100 +45,30 @@
             "dtype": "float64",
             "range": null
         },
-        "left_ankle_roll_joint": {
-            "original_key": "action",
+        "right_arm": {
+            "original_key": "observation.state",
             "start": 28,
             "end": 35,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
             "range": null
-        },
-        "right_hip_yaw_joint": {
+        }
+    },
+    "action": {
+        "mocap_xyz": {
             "original_key": "action",
-            "start": 35,
-            "end": 42,
+            "start": 0,
+            "end": 33,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",
             "range": null
         },
-        "right_knee_joint": {
+        "mocap_6d": {
             "original_key": "action",
-            "start": 42,
-            "end": 49,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "right_ankle_pitch_joint":{
-            "original_key": "action",
-            "start": 49,
-            "end": 56,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "right_ankle_roll_joint":{
-            "original_key": "action",
-            "start": 56,
-            "end": 63,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "left_shoulder_yaw_joint":{
-            "original_key": "action",
-            "start": 63,
-            "end": 70,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "left_elbow_joint":{
-            "original_key": "action",
-            "start": 70,
-            "end": 77,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "left_wrist_yaw_joint":{
-            "original_key": "action",
-            "start": 77,
-            "end": 84,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "right_shoulder_yaw_joint":{
-            "original_key": "action",
-            "start": 84,
-            "end": 91,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "right_elbow_joint":{
-            "original_key": "action",
-            "start": 91,
-            "end": 98,
-            "rotation_type": null,
-            "absolute": true,
-            "dtype": "float64",
-            "range": null
-        },
-        "right_wrist_yaw_joint":{
-            "original_key": "action",
-            "start": 98,
-            "end": 105,
+            "start": 33,
+            "end": 99,
             "rotation_type": null,
             "absolute": true,
             "dtype": "float64",

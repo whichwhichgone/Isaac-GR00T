@@ -5,13 +5,14 @@ cd /liujinxin/liyifan/Isaac-GR00T/
 source .venv/bin/activate
 export WANDB_MODE=disabled
 export NUM_GPUS=4
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export WANDB_API_KEY="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"
 export WANDB_ENTITY="liyifansmx-westlake-university"
 
 torchrun --nproc_per_node=$NUM_GPUS --master_port=29500 \
     gr00t/experiment/launch_finetune.py \
     --base-model-path /liujinxin/liyifan/Isaac-GR00T/checkpoints/GR00T-N1.6-3B \
-    --dataset-path /liujinxin/liyifan/Isaac-GR00T/dataset/2026-05-24_clean_desk_place_sofa_g1_fast \
+    --dataset-path /liujinxin/liyifan/Isaac-GR00T/dataset/2026-05-24_clean_desk_place_sofa_g1_fast_sampling \
     --embodiment_tag UNITREE_G1_15X7_MOCAP \
     --num_gpus $NUM_GPUS \
     --output-dir ./checkpoints/2026-05-24_clean_desk_place_sofa_g1_fast_tune_llm_sampling \
