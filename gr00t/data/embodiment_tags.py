@@ -66,5 +66,6 @@ class EmbodimentTag(Enum):
     UNITREE_G1_29DOF_SINGLE_VIEW_DOWNSAMPLING_CONCAT = "unitree_g1_29dof_single_view_downsampling_concat"
     UNITREE_G1_15X7_MOCAP = "unitree_g1_15x7_mocap"
     UNITREE_G1_15X9_MOCAP = "unitree_g1_15x9_mocap"
+    UNITREE_G1_11X9_MOCAP_HISTORY = "unitree_g1_11x9_mocap_history"
 
 

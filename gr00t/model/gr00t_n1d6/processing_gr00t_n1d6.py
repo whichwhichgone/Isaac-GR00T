@@ -46,7 +46,8 @@ EMBODIMENT_TAG_TO_PROJECTOR_INDEX = {
     "unitree_g1_29dof_single_view_downsampling": 12,
     "unitree_g1_29dof_single_view_downsampling_concat": 14,
     "unitree_g1_15x7_mocap": 15,
-    "unitree_g1_15x9_mocap": 16
+    "unitree_g1_15x9_mocap": 16,
+    "unitree_g1_11x9_mocap_history": 17
 }
 
 

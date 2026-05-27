@@ -709,8 +709,7 @@ MODALITY_CONFIGS = {
         "action": ModalityConfig(
             delta_indices=list(range(30)),
             modality_keys=[
-                "mocap_xyz",
-                "mocap_6d"
+                "mocap"
             ],
             action_configs=[
                 ActionConfig(
@@ -718,6 +717,30 @@ MODALITY_CONFIGS = {
                     type=ActionType.NON_EEF,
                     format=ActionFormat.DEFAULT,
                 ),
+            ],
+        ),
+        "language": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=["annotation.human.task_description"],
+        )
+    },
+    "unitree_g1_11x9_mocap_history":{    
+        "video": ModalityConfig(
+                delta_indices=[0],
+                modality_keys=["ego_view"],
+            ),
+        "state": ModalityConfig(
+            delta_indices=list(range(-24,1)),
+            modality_keys=[
+                "imu_joints"
+            ],
+        ),
+        "action": ModalityConfig(
+            delta_indices=list(range(30)),
+            modality_keys=[
+                "mocap"
+            ],
+            action_configs=[
                 ActionConfig(
                     rep=ActionRepresentation.ABSOLUTE,
                     type=ActionType.NON_EEF,
