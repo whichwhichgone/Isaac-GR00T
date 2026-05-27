@@ -13,6 +13,7 @@
 /examples/LIBERO/libero_goal_no_noops_1.0.0_lerobot/
 /examples/LIBERO/libero_object_no_noops_1.0.0_lerobot/
 /examples/LIBERO/libero_spatial_no_noops_1.0.0_lerobot/
+/examples/GR00T-WholeBodyControl/G1_real*
 
 # UV lock file
 uv.lock
