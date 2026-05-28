@@ -9,6 +9,7 @@ from gr00t.experiment.dist_utils import get_rank
 from gr00t.model.base.model_pipeline import ModelPipeline
 from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
 from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import Gr00tN1d6Processor
+from gr00t.model.modules.embodiment_conditioned_mlp import CategorySpecificLinear
 from gr00t.model.registry import register_model
 import numpy as np
 from termcolor import colored
@@ -27,6 +28,18 @@ def convert_tensors_to_lists(obj):
         return [convert_tensors_to_lists(item) for item in obj]
     else:
         return obj
+
+
+def _reset_state_act_projector(model: Gr00tN1d6) -> None:
+    modules = (
+        model.action_head.state_encoder,
+        model.action_head.action_encoder,
+        model.action_head.action_decoder,
+    )
+    for module in modules:
+        for child in module.modules():
+            if isinstance(child, CategorySpecificLinear):
+                child.reset_parameters()
 
 
 class Gr00tN1d6Pipeline(ModelPipeline):
@@ -76,6 +89,7 @@ class Gr00tN1d6Pipeline(ModelPipeline):
                 model_path,
                 tune_llm=self.config.model.tune_llm,
                 tune_visual=self.config.model.tune_visual,
+                tune_top_llm_layers=self.config.model.tune_top_llm_layers,
                 tune_projector=self.config.model.tune_projector,
                 tune_diffusion_model=self.config.model.tune_diffusion_model,
                 tune_vlln=self.config.model.tune_vlln,
@@ -83,6 +97,7 @@ class Gr00tN1d6Pipeline(ModelPipeline):
                 backbone_trainable_params_fp32=self.config.model.backbone_trainable_params_fp32,
                 transformers_loading_kwargs=self.transformers_loading_kwargs,
                 output_loading_info=True,
+                ignore_mismatched_sizes=True,
                 **self.transformers_loading_kwargs,
             )
 
@@ -97,6 +112,12 @@ class Gr00tN1d6Pipeline(ModelPipeline):
                         0.02 * torch.randn_like(model.action_head.mask_token)
                     )
                 logging.info("mask_token not in checkpoint - initialized")
+
+            if self.config.training.reset_state_act_projector:
+                _reset_state_act_projector(model)
+                logging.info(
+                    "Reset state/action projector modules: state_encoder, action_encoder, action_decoder"
+                )
 
         else:
             model = self.model_class(

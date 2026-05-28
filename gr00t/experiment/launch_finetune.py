@@ -89,6 +89,7 @@ if __name__ == "__main__":
     config.training.use_wandb = ft_config.use_wandb
     config.training.max_steps = ft_config.max_steps
     config.training.weight_decay = ft_config.weight_decay
+    config.training.reset_state_act_projector = ft_config.reset_state_act_projector
     config.training.warmup_ratio = ft_config.warmup_ratio
     config.training.wandb_project = "finetune-gr00t-n1d6"
 

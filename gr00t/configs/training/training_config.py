@@ -95,6 +95,9 @@ class TrainingConfig:
     # Max number of retries in training for fault tolerance
     max_retries: int = 3
 
+    # Model initialization
+    reset_state_act_projector: bool = False
+
     # For testing.
     assert_loss_less_than: float | None = None
 

@@ -28,7 +28,8 @@ class FinetuneConfig:
     init_model_from: str | None = None
     """If set, load model weights from this path (e.g. a previous training checkpoint-XXXX dir)
     instead of `base_model_path`. Processor still loads from `base_model_path`.
-    Use this to continue training from a prior run with a different trainable-param set."""
+    Use this to continue training from a prior run with a different trainable-param set. This is 
+    for multi-stage fine-tuning where each stage has a different set of trainable parameters."""
 
     modality_config_path: str | None = None
     """
@@ -130,6 +131,9 @@ class FinetuneConfig:
 
     weight_decay: float = 1e-5
     """Weight decay coefficient for optimizer (L2 regularization)."""
+
+    reset_state_act_projector: bool = False
+    """If True, reinitialize state_encoder, action_encoder, and action_decoder after loading checkpoint weights."""
 
     warmup_ratio: float = 0.05
     """Proportion of total training steps used for learning rate warm-up."""

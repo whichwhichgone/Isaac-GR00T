@@ -51,6 +51,11 @@ class CategorySpecificLinear(nn.Module):
         self.W = nn.Parameter(0.02 * torch.randn(num_categories, input_dim, hidden_dim))
         self.b = nn.Parameter(torch.zeros(num_categories, hidden_dim))
 
+    def reset_parameters(self):
+        with torch.no_grad():
+            self.W.normal_(mean=0.0, std=0.02)
+            self.b.zero_()
+
     def forward(self, x, cat_ids):
         """
         Args:

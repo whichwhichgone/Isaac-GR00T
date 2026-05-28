@@ -24,6 +24,9 @@ def extract_step_data(
         step_data[modality] = {}
         # Sample timesteps according to delta indices configuration
         indices_to_load = [step_index + delta_index for delta_index in config.delta_indices]
+        if modality in ["state", "action"]:
+            random_offset = np.random.randint(-1, 2)
+            indices_to_load = [idx + random_offset for idx in indices_to_load]
         if allow_padding:
             indices_to_load = [max(0, min(idx, len(episode_data) - 1)) for idx in indices_to_load]
         for key in config.modality_keys:
