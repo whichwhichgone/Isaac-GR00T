@@ -25,6 +25,11 @@ class FinetuneConfig:
     embodiment_tag: EmbodimentTag
     """Identifier specifying which embodiment (robot configuration) this fine-tuning run targets."""
 
+    init_model_from: str | None = None
+    """If set, load model weights from this path (e.g. a previous training checkpoint-XXXX dir)
+    instead of `base_model_path`. Processor still loads from `base_model_path`.
+    Use this to continue training from a prior run with a different trainable-param set."""
+
     modality_config_path: str | None = None
     """
     Path to a Python file defining the modality configuration for the given embodiment. 

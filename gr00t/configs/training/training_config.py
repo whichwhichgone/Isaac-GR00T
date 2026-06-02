@@ -30,6 +30,10 @@ class TrainingConfig:
     optim: str = "adamw_torch_fused"
 
     start_from_checkpoint: Optional[str] = None
+    # If set, load model weights from this path instead of `start_from_checkpoint`.
+    # Processor is still loaded from `start_from_checkpoint`. Use this to continue
+    # from a previous training checkpoint whose dir doesn't contain processor files.
+    init_model_from: Optional[str] = None
 
     # Mixed precision
     tf32: bool = True

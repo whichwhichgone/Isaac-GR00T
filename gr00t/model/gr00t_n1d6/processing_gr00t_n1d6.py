@@ -392,6 +392,10 @@ class Gr00tN1d6Processor(BaseProcessor):
         normalized_states = torch.cat(
             [torch.from_numpy(normalized_states[key]) for key in state_keys], dim=-1
         )
+
+        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
+            normalized_states = self._reshape_unitree_g1_29dof_states(normalized_states)
+            
         normalized_states = torch.cat(
             [
                 normalized_states,
