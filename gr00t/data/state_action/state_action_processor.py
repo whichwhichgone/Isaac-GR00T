@@ -12,6 +12,7 @@ from copy import deepcopy
 
 from gr00t.configs.data.embodiment_configs import ActionFormat, ActionRepresentation, ActionType, ModalityConfig
 from gr00t.data.state_action.action_chunking import EndEffectorActionChunk, ImuActionChunk, JointActionChunk
+from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.data.state_action.pose import EndEffectorPose, ImuPose, JointPose
 from gr00t.data.utils import (
     apply_sin_cos_encoding,
@@ -183,6 +184,10 @@ class StateActionProcessor:
                 - Sin/cos encoded groups: (..., 2*D)
                 - Other groups: (..., D)
         """
+        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+            normalized_values = deepcopy(state)
+            return normalized_values
+
         normalized_values = {}
         state = deepcopy(state)  # Avoid modifying input
 
@@ -364,6 +369,10 @@ class StateActionProcessor:
         Raises:
             ValueError: If state is None but required for relative action conversion
         """
+        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+            normalized_values = deepcopy(action)
+            return normalized_values
+
         action = deepcopy(action)  # Avoid modifying input
 
         # Step 1: Convert absolute actions to relative (if needed)
@@ -452,6 +461,10 @@ class StateActionProcessor:
         Raises:
             ValueError: If state is None but required for relative->absolute conversion
         """
+        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+            unnormalized_values = deepcopy(action)
+            return unnormalized_values
+
         # Step 1: Unnormalize actions
         unnormalized_values = {}
         modality_keys = self.modality_configs[embodiment_tag]["action"].modality_keys

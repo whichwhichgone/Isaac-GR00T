@@ -8,10 +8,10 @@ export WANDB_API_KEY=83793606f810aa3d385ea5d12dbd352514ac54e1
 torchrun --nproc_per_node=$NUM_GPUS --master_port=29500 \
     gr00t/experiment/launch_finetune.py \
     --base_model_path models/GR00T-N1.6-3B \
-    --dataset_path /liujinxin/zhaowei/Isaac-GR00T/examples/GR00T-WholeBodyControl/G1_real_6D_downsample \
+    --dataset_path /liujinxin/zhaowei/G1_MOTION/data/G1_real_6D_window_cont_rel \
     --embodiment_tag UNITREE_G1_29DOF \
     --num_gpus $NUM_GPUS \
-    --output_dir logs_output/g1_29dof_finetune_real_6D_downsample \
+    --output_dir logs_output/g1_29dof_finetune_real_6D_window_cont_rel \
     --save_total_limit 3 \
     --max_steps 25000 \
     --save_steps 5000 \

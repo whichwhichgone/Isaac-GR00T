@@ -351,27 +351,16 @@ MODALITY_CONFIGS = {
         "state": ModalityConfig(
             delta_indices=[0],
             modality_keys=[
-                "base_rotation",
-                "left_leg",
-                "right_leg",
-                "waist",
-                "left_arm",
-                "right_arm",
+                "imu_joints",
             ],
         ),
         "action": ModalityConfig(
-            delta_indices=list(range(30)),
+            delta_indices=[0],
             modality_keys=[
-                "mocap_xyz",
-                "mocap_6d",
+                "mocap",
             ],
             action_configs=[
                 # base_rotation
-                ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.NON_EEF,
-                    format=ActionFormat.DEFAULT,
-                ),
                 ActionConfig(
                     rep=ActionRepresentation.ABSOLUTE,
                     type=ActionType.NON_EEF,
