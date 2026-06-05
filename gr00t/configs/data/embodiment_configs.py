@@ -349,24 +349,31 @@ MODALITY_CONFIGS = {
             modality_keys=["ego_view"],
         ),
         "state": ModalityConfig(
-            delta_indices=[0],
+            delta_indices=list(range(-49, 1)),
             modality_keys=[
-                "base_rotation",
+                "imu",
                 "left_leg",
                 "right_leg",
                 "waist",
                 "left_arm",
                 "right_arm",
             ],
+            no_normalize_keys=["imu"],
         ),
         "action": ModalityConfig(
-            delta_indices=list(range(30)),
+            delta_indices=list(range(50)),
             modality_keys=[
+                "root_delta",
                 "mocap_xyz",
-                "mocap_6d",
+                "mocap_rot6d",
             ],
+            no_normalize_keys=["mocap_rot6d"],
             action_configs=[
-                # base_rotation
+                ActionConfig(
+                    rep=ActionRepresentation.ABSOLUTE,
+                    type=ActionType.NON_EEF,
+                    format=ActionFormat.DEFAULT,
+                ),
                 ActionConfig(
                     rep=ActionRepresentation.ABSOLUTE,
                     type=ActionType.NON_EEF,

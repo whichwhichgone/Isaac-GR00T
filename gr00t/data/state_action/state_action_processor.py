@@ -79,6 +79,11 @@ class StateActionProcessor:
 
         self.train()
 
+    def _should_skip_normalization(self, embodiment_tag: str, modality: str, key: str) -> bool:
+        modality_config = self.modality_configs[embodiment_tag].get(modality)
+        no_normalize_keys = getattr(modality_config, "no_normalize_keys", None)
+        return no_normalize_keys is not None and key in no_normalize_keys
+
     def train(self):
         self.training = True
 
@@ -203,7 +208,11 @@ class StateActionProcessor:
             if sin_cos_keys and joint_group in sin_cos_keys:
                 normalized_values[joint_group] = apply_sin_cos_encoding(state[joint_group])
 
-            # Strategy 2: Mean/std normalization
+            # Strategy 2: No normalization, keep raw values
+            elif self._should_skip_normalization(embodiment_tag, "state", joint_group):
+                normalized_values[joint_group] = state[joint_group]
+
+            # Strategy 3: Mean/std normalization
             elif (
                 hasattr(
                     self.modality_configs[embodiment_tag]["state"],
@@ -217,7 +226,7 @@ class StateActionProcessor:
                 normalized = normalize_values_meanstd(state[joint_group], params)
                 normalized_values[joint_group] = normalized
 
-            # Strategy 3: Min/max normalization to [-1, 1]
+            # Strategy 4: Min/max normalization to [-1, 1]
             else:
                 params = self.norm_params[embodiment_tag]["state"][joint_group]
                 normalized = normalize_values_minmax(state[joint_group], params)
@@ -256,6 +265,10 @@ class StateActionProcessor:
                 raise KeyError(
                     f"Stickman key '{stickman_key}' not found in stickman dict for embodiment '{embodiment_tag}'"
                 )
+
+            if self._should_skip_normalization(embodiment_tag, "stickman", stickman_key):
+                normalized_values[stickman_key] = stickman[stickman_key]
+                continue
 
             params = self.norm_params[embodiment_tag]["stickman"][stickman_key]
             if (
@@ -312,6 +325,10 @@ class StateActionProcessor:
                     f"Cannot unapply sin/cos encoding for joint group '{joint_group}' "
                     f"in embodiment '{embodiment_tag}'. This transformation is not reversible."
                 )
+
+            # No normalization was applied, keep values as-is
+            elif self._should_skip_normalization(embodiment_tag, "state", joint_group):
+                unnormalized_values[joint_group] = state[joint_group]
 
             # Reverse mean/std normalization
             elif (
@@ -407,6 +424,10 @@ class StateActionProcessor:
                     f"Joint group '{joint_group}' not found in action dict for embodiment '{embodiment_tag}'"
                 )
 
+            if self._should_skip_normalization(embodiment_tag, "action", joint_group):
+                normalized_values[joint_group] = action[joint_group]
+                continue
+
             params = self.norm_params[embodiment_tag]["action"][joint_group]
             if (
                 self.modality_configs[embodiment_tag]["action"].mean_std_embedding_keys is not None
@@ -462,9 +483,13 @@ class StateActionProcessor:
                     f"Joint group '{joint_group}' not found in action dict for embodiment '{embodiment_tag}'"
                 )
 
-            params = self.norm_params[embodiment_tag]["action"][joint_group]
             group_values = action[joint_group]
 
+            if self._should_skip_normalization(embodiment_tag, "action", joint_group):
+                unnormalized_values[joint_group] = group_values
+                continue
+
+            params = self.norm_params[embodiment_tag]["action"][joint_group]
             if (
                 self.modality_configs[embodiment_tag]["action"].mean_std_embedding_keys is not None
                 and joint_group

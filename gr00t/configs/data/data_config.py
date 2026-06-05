@@ -69,7 +69,7 @@ class DataConfig:
     shuffle: bool = True
     seed: int = 42
     multiprocessing_context: str = "fork"  # Options: "fork", "spawn", and "forkserver"
-    allow_padding: bool = False
+    allow_padding: bool = True
 
     # Subsample ratio for the dataset
     subsample_ratio: float = 1.0

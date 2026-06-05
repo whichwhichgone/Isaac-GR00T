@@ -84,6 +84,8 @@ class ModalityConfig:
     """Optional list of keys to apply sin/cos encoding. If None or empty, use min/max normalization for all keys."""
     mean_std_embedding_keys: list[str] | None = None
     """Optional list of keys to apply mean/std normalization. If None or empty, use min/max normalization for all keys."""
+    no_normalize_keys: list[str] | None = None
+    """Optional list of keys to leave in raw scale without normalization."""
     action_configs: list[ActionConfig] | None = None
 
     def __post_init__(self):
