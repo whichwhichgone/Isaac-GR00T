@@ -124,7 +124,7 @@ class ShardedSingleStepDataset(ShardedDataset):
         shard_size: int = 2**10,  # 1024 steps
         episode_sampling_rate: float = 0.1,
         seed: int = 42,
-        allow_padding: bool = True,
+        allow_padding: bool = False,
     ):
         """Initialize single-step dataset with sharding configuration."""
         super().__init__(dataset_path)

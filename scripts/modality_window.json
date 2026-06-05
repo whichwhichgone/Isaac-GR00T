@@ -1,0 +1,43 @@
+{
+    "state": {
+        "imu_joints": {
+            "original_key": "observation.state",
+            "start": 0,
+            "end": 1750,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        }
+    },
+    "action": {
+        "mocap": {
+            "original_key": "action",
+            "start": 0,
+            "end": 5100,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
+        }
+    },
+    "video": {
+        "ego_view": {
+            "original_key": "observation.images.head_img"
+        },
+        "left_wrist_view": {
+            "original_key": "observation.images.left_wrist_img"
+        },
+        "right_wrist_view": {
+            "original_key": "observation.images.right_wrist_img"
+        }
+    },
+    "annotation": {
+        "human.task_description": {
+            "original_key": "task_index"
+        },
+        "human.stickman": {
+            "original_key": "task_vis_stickman"
+        }
+    }
+}

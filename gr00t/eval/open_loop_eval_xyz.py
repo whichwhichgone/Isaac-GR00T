@@ -44,31 +44,36 @@ def compute_mocap_xyz_error_stats(
     if gt_action_across_time.ndim != 2:
         raise ValueError(f"Expected actions to be 2D [T, D], got {gt_action_across_time.shape}")
 
-    actual_steps, action_dim = gt_action_across_time.shape
-    if action_dim % mocap_dim != 0:
-        raise ValueError(f"Action dim {action_dim} is not divisible by mocap block dim {mocap_dim}")
+    actual_steps, action_dim = gt_action_across_time.shape  #gt_action_across_time.shape (893, 5100)   pred_action_across_time.shape (893, 5100)
+    gt_action_across_time_mocap_flat = gt_action_across_time.reshape(actual_steps, 50, -1)[:,:,3:]
+    gt_action_across_time_mocap_11x9 = gt_action_across_time_mocap_flat.reshape(actual_steps, 50, 11, mocap_dim)
+    gt_action_across_time_mocap_root_xyz = gt_action_across_time_mocap_11x9[:, :, 0, :3]
+    gt_action_across_time_mocap_without_root_xyz = gt_action_across_time_mocap_11x9[:, :, 1:, :3]
+    pred_action_across_time_mocap_flat = pred_action_across_time.reshape(actual_steps, 50, -1)[:,:,3:]
+    pred_action_across_time_mocap_11x9 = pred_action_across_time_mocap_flat.reshape(actual_steps, 50, 11, mocap_dim)
+    pred_action_across_time_mocap_root_xyz = pred_action_across_time_mocap_11x9[:, :, 0, :3]
+    pred_action_across_time_mocap_without_root_xyz = pred_action_across_time_mocap_11x9[:, :, 1:, :3]
 
-    num_points = action_dim // mocap_dim
-    gt_action_mocap = gt_action_across_time.reshape(actual_steps, num_points, mocap_dim)
-    pred_action_mocap = pred_action_across_time.reshape(actual_steps, num_points, mocap_dim)
 
-    xyz_error = gt_action_mocap[:, :, :3] - pred_action_mocap[:, :, :3]
+    xyz_error = gt_action_across_time_mocap_11x9[:, :, :, :3] - pred_action_across_time_mocap_11x9[:, :, :, :3]
+    root_xyz_error = gt_action_across_time_mocap_root_xyz - pred_action_across_time_mocap_root_xyz
+    without_root_xyz_error = gt_action_across_time_mocap_without_root_xyz - pred_action_across_time_mocap_without_root_xyz
     return {
-        "mse_curve": np.mean(xyz_error**2, axis=1),  # [T, 3], mean over mocap points
-        "mae_curve": np.mean(np.abs(xyz_error), axis=1),  # [T, 3], mean over mocap points
-        "mse_xyz": np.mean(xyz_error**2, axis=(0, 1)),  # [3], mean over time and points
-        "mae_xyz": np.mean(np.abs(xyz_error), axis=(0, 1)),  # [3], mean over time and points
-    }
+        "mse_curve": np.mean(xyz_error**2, axis=(1, 2)),  # [T, 3], mean over mocap points
+        "mae_curve": np.mean(np.abs(xyz_error), axis=(1, 2)),  # [T, 3], mean over mocap points
+        "mse_without_root_curve": np.mean(without_root_xyz_error**2, axis=(1, 2)),  # [T, 3], mean over mocap points
+        "mae_without_root_curve": np.mean(np.abs(without_root_xyz_error), axis=(1, 2)),  # [T, 3], mean over mocap points
+        "mse_root_curve": np.mean(root_xyz_error**2, axis=(1)),  # [T, 3], mean over root points
+        "mae_root_curve": np.mean(np.abs(root_xyz_error), axis=(1)),  # [T,3], mean over root points
+        "mse_xyz": np.mean(xyz_error**2, axis=(0, 1, 2)),  # [3], mean over time and points
+        "mae_xyz": np.mean(np.abs(xyz_error), axis=(0, 1, 2)),  # [3], mean over time and points
+    }, gt_action_across_time_mocap_root_xyz[:,0,:], pred_action_across_time_mocap_root_xyz[:,0,:]
 
 
 def plot_trajectory_results(
-    state_joints_across_time: np.ndarray,
     gt_action_across_time: np.ndarray,
     pred_action_across_time: np.ndarray,
     traj_id: int,
-    state_keys: list[str],
-    action_keys: list[str],
-    action_horizon: int,
     save_plot_path: str,
 ) -> None:
     """
@@ -85,49 +90,134 @@ def plot_trajectory_results(
         save_plot_path: Path to save the plot
     """
     actual_steps = len(gt_action_across_time)
-    error_stats = compute_mocap_xyz_error_stats(gt_action_across_time, pred_action_across_time)
-    mse_curve = error_stats["mse_curve"]
-    mae_curve = error_stats["mae_curve"]
-    coord_names = ["x", "y", "z"]
+    action_dim = gt_action_across_time.shape[1]
+
+    indices_to_plot = list(range(action_dim))
+
+    num_plots = len(indices_to_plot)
+    if num_plots == 0:
+        logging.warning("No valid indices to plot")
+        return
 
     # Always plot and save
-    fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(12, 8), sharex=True)
+    fig, axes = plt.subplots(nrows=num_plots, ncols=1, figsize=(8, 4 * num_plots))
 
-    # Add a global title showing the modality keys
-    fig.suptitle(
-        "Trajectory "
-        f"{traj_id} - State: {', '.join(state_keys)} | Action: {', '.join(action_keys)}",
-        fontsize=16,
-        color="blue",
-    )
+    # Handle case where there's only one subplot
+    if num_plots == 1:
+        axes = [axes]
 
-    for coord_idx, coord_name in enumerate(coord_names):
-        axes[0].plot(mse_curve[:, coord_idx], label=f"{coord_name} mse")
-        axes[1].plot(mae_curve[:, coord_idx], label=f"{coord_name} mae")
+    for plot_idx, action_idx in enumerate(indices_to_plot):
+        ax = axes[plot_idx]
 
-    for ax in axes:
-        # Draw a vertical marker every ACTION_HORIZON to show policy inference points.
-        for j in range(0, actual_steps, action_horizon):
-            if j == 0:
-                ax.axvline(j, color="red", linestyle=":", alpha=0.6, label="inference point")
-            else:
-                ax.axvline(j, color="red", linestyle=":", alpha=0.6)
-        ax.legend(ncol=4, fontsize="small")
+        # The dimensions of state_joints and action are the same
+        # only when the robot uses actions directly as joint commands.
+        # Therefore, do not plot them if this is not the case.
+        # if state_joints_across_time.shape == gt_action_across_time.shape:
+        #     ax.plot(state_joints_across_time[:, action_idx], label="state joints")
+        ax.plot(gt_action_across_time[:, action_idx], label="gt action")
+        ax.plot(pred_action_across_time[:, action_idx], label="pred action")
 
-    axes[0].set_title("Mocap xyz MSE over time, averaged across 11 points")
-    axes[0].set_ylabel("MSE")
-    axes[1].set_title("Mocap xyz MAE over time, averaged across 11 points")
-    axes[1].set_xlabel("Timestep")
-    axes[1].set_ylabel("MAE")
+        ax.set_title(f"Action {action_idx}")
+        ax.legend()
 
     plt.tight_layout()
-
+    
     # Create filename with trajectory ID
-    Path(save_plot_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(save_plot_path)
-    print(f"figure save in {save_plot_path}")
+    save_plot_path = Path(save_plot_path)
+    save_path =  f"{save_plot_path}/root_xyz_real.jpeg"
+    
+    plt.savefig(save_path)
 
     plt.close()  # Close the figure to free memory
+
+
+def plot_trajectory_error(
+    error_stats: np.ndarray,
+    traj_id: int,
+    state_keys: list[str],
+    action_keys: list[str],
+    save_plot_path: str,
+) -> None:
+    """
+    Plot and save trajectory results comparing ground truth and predicted actions.
+
+    This version saves three separate figures:
+    1. mocap xyz error
+    2. root xyz error
+    3. without_root xyz error
+    """
+    actual_steps = len(error_stats["mse_curve"])
+
+    coord_names = ["x", "y", "z"]
+
+    plot_groups = {
+        "mocap": {
+            "mse": error_stats["mse_curve"],
+            "mae": error_stats["mae_curve"],
+            "title": "Mocap xyz error over time, averaged across 11 points",
+        },
+        "root": {
+            "mse": error_stats["mse_root_curve"],
+            "mae": error_stats["mae_root_curve"],
+            "title": "Root xyz error over time",
+        },
+        "without_root": {
+            "mse": error_stats["mse_without_root_curve"],
+            "mae": error_stats["mae_without_root_curve"],
+            "title": "Mocap xyz error over time without root, averaged across non-root points",
+        },
+    }
+
+    save_plot_path = Path(save_plot_path)
+    save_plot_path.mkdir(parents=True, exist_ok=True)
+
+    for group_name, group_data in plot_groups.items():
+        fig, axes = plt.subplots(
+            nrows=2,
+            ncols=1,
+            figsize=(12, 8),
+            sharex=True,
+        )
+
+        fig.suptitle(
+            "Trajectory "
+            f"{traj_id} - {group_name} | "
+            f"State: {', '.join(state_keys)} | "
+            f"Action: {', '.join(action_keys)}",
+            fontsize=16,
+            color="blue",
+        )
+
+        mse_curve = group_data["mse"]
+        mae_curve = group_data["mae"]
+
+        for coord_idx, coord_name in enumerate(coord_names):
+            axes[0].plot(
+                mse_curve[:, coord_idx],
+                label=f"{group_name}_{coord_name} mse",
+            )
+            axes[1].plot(
+                mae_curve[:, coord_idx],
+                label=f"{group_name}_{coord_name} mae",
+            )
+
+
+        axes[0].set_title(f"{group_data['title']} - MSE")
+        axes[0].set_ylabel("MSE")
+
+        axes[1].set_title(f"{group_data['title']} - MAE")
+        axes[1].set_xlabel("Timestep")
+        axes[1].set_ylabel("MAE")
+
+        fig.tight_layout()
+
+        group_save_path =  f"{save_plot_path}/{group_name}.jpeg"
+
+
+        fig.savefig(group_save_path)
+        print(f"figure save in {group_save_path}")
+
+        plt.close(fig)
 
 
 def parse_observation_gr00t(
@@ -186,6 +276,7 @@ def evaluate_single_trajectory(
     modality_keys: list[str] | None = None,
     steps=300,
     action_horizon=16,
+    checkpoint_name=None,
     save_plot_path=None,
     save_action_json_path=None,
     save_gt_action_json_path=None,
@@ -193,6 +284,7 @@ def evaluate_single_trajectory(
     # Ensure steps doesn't exceed trajectory length
     traj = loader[traj_id]
     traj_length = len(traj)
+    steps = traj_length - 1
     actual_steps = min(steps, traj_length)
     logging.info(
         f"Using {actual_steps} steps (requested: {steps}, trajectory length: {traj_length})"
@@ -247,27 +339,25 @@ def evaluate_single_trajectory(
     pred_action_across_time = np.array(pred_action_across_time)[:actual_steps]
 
     # Save predicted actions to JSON: list of [root_x, root_y, root_z, qw, qx, qy, qz, joint_0, ..., joint_28]
-    if save_action_json_path is not None:
-        json_path = Path(save_action_json_path)
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(json_path, "w") as f:
-            json.dump(pred_action_across_time.tolist(), f)
-        logging.info(f"Saved predicted actions to {json_path}")
+    json_path = Path(f"/liujinxin/liyifan/Isaac-GR00T/tmp/open_loop_eval/{checkpoint_name}/traj_{traj_id}/pred_action.json")
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(json_path, "w") as f:
+        json.dump(pred_action_across_time.tolist(), f)
+    logging.info(f"Saved predicted actions to {json_path}")
 
     # Save ground truth actions to JSON
-    if save_gt_action_json_path is not None:
-        gt_json_path = Path(save_gt_action_json_path)
-        gt_json_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(gt_json_path, "w") as f:
-            json.dump(gt_action_across_time.tolist(), f)
-        logging.info(f"Saved ground truth actions to {gt_json_path}")
+    gt_json_path = Path(f"/liujinxin/liyifan/Isaac-GR00T/tmp/open_loop_eval/{checkpoint_name}/traj_{traj_id}/gt_action.json")
+    gt_json_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(gt_json_path, "w") as f:
+        json.dump(gt_action_across_time.tolist(), f)
+    logging.info(f"Saved ground truth actions to {gt_json_path}")
 
     assert gt_action_across_time.shape == pred_action_across_time.shape, (
         f"gt_action: {gt_action_across_time.shape}, pred_action: {pred_action_across_time.shape}"
     )
 
     # calc MSE and MAE for x/y/z, averaging over the 11 mocap points.
-    error_stats = compute_mocap_xyz_error_stats(gt_action_across_time, pred_action_across_time)
+    error_stats, gt_action_across_time_mocap_root_xyz, pred_action_across_time_mocap_root_xyz = compute_mocap_xyz_error_stats(gt_action_across_time, pred_action_across_time)
     mse_xyz = error_stats["mse_xyz"]
     mae_xyz = error_stats["mae_xyz"]
     mse = float(np.mean(mse_xyz))
@@ -288,18 +378,20 @@ def evaluate_single_trajectory(
     logging.info(f"mae_xyz_curve vs time {error_stats['mae_curve'].shape}")
 
     # Plot trajectory results
-    plot_trajectory_results(
-        state_joints_across_time=state_joints_across_time,
-        gt_action_across_time=gt_action_across_time,
-        pred_action_across_time=pred_action_across_time,
+    plot_trajectory_error(
+        error_stats=error_stats,
         traj_id=traj_id,
         state_keys=state_keys,
         action_keys=action_keys,
-        action_horizon=action_horizon,
-        save_plot_path= f"/liujinxin/liyifan/Isaac-GR00T/tmp/open_loop_eval/traj_{traj_id}.jpeg",
+        save_plot_path= f"/liujinxin/liyifan/Isaac-GR00T/tmp/open_loop_eval/{checkpoint_name}/traj_{traj_id}",
         # save_plot_path=save_plot_path or f"/tmp/open_loop_eval/traj_{traj_id}.jpeg",
     )
-
+    plot_trajectory_results(
+        gt_action_across_time = gt_action_across_time_mocap_root_xyz,
+        pred_action_across_time = pred_action_across_time_mocap_root_xyz,
+        traj_id=traj_id,
+        save_plot_path= f"/liujinxin/liyifan/Isaac-GR00T/tmp/open_loop_eval/{checkpoint_name}/traj_{traj_id}"
+    )
     return mse, mae
 
 
@@ -313,29 +405,29 @@ class ArgsConfig:
     port: int = 5555
     """Port to connect to."""
 
-    steps: int = 1000
+    steps: int = 2000
     """Maximum number of steps to evaluate (will be capped by trajectory length)."""
 
     traj_ids: list[int] = field(default_factory=lambda: [0,1,2,3,4])
     """List of trajectory IDs to evaluate."""
 
-    action_horizon: int = 50
+    action_horizon: int = 1
     """Action horizon to evaluate."""
 
-    dataset_path: str = "/liujinxin/liyifan/Isaac-GR00T/dataset/2026-05-24_clean_desk_place_sofa_g1_fast"
+    dataset_path: str = "/liujinxin/liyifan/Isaac-GR00T/dataset/G1_real_6D_window_cont_rel"
     """Path to the dataset."""
 
-    embodiment_tag: EmbodimentTag = EmbodimentTag.UNITREE_G1_11X9_MOCAP_HISTORY
+    embodiment_tag: EmbodimentTag = EmbodimentTag.UNITREE_G1_29DOF
     """Embodiment tag to use."""
 
-    model_path: str | None = "/liujinxin/liyifan/Isaac-GR00T/checkpoints/2026-05-24_clean_desk_place_sofa_g1_fast_with_history/checkpoint-40000"
+    model_path: str | None = "/liujinxin/liyifan/Isaac-GR00T/checkpoints/G1_real_6D_window_cont_rel/checkpoint-40000"
     """Path to the model checkpoint."""
+
+    checkpoint_name: str = "G1_real_6D_window_cont_rel-40000"
+    """Name of the checkpoint to use."""
 
     denoising_steps: int = 4
     """Number of denoising steps to use."""
-
-    save_plot_path: str | None = "./open_loop_eval_xyz.png"
-    """Path to save the plot to."""
 
     modality_keys: list[str] | None = None
     """List of modality keys to plot. If None, plot all keys."""
@@ -412,7 +504,7 @@ def main(args: ArgsConfig):
             args.modality_keys,
             steps=args.steps,
             action_horizon=args.action_horizon,
-            save_plot_path=args.save_plot_path,
+            checkpoint_name=args.checkpoint_name,
             save_action_json_path=args.save_action_json_path,
             save_gt_action_json_path=args.save_gt_action_json_path,
         )

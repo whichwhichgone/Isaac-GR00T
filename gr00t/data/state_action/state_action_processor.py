@@ -189,7 +189,9 @@ class StateActionProcessor:
                 - Sin/cos encoded groups: (..., 2*D)
                 - Other groups: (..., D)
         """
-        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+        if embodiment_tag in (
+            EmbodimentTag.UNITREE_G1_29DOF.value,
+        ):
             normalized_values = deepcopy(state)
             return normalized_values
     
@@ -330,7 +332,9 @@ class StateActionProcessor:
         Raises:
             ValueError: If state is None but required for relative action conversion
         """
-        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+        if embodiment_tag in (
+            EmbodimentTag.UNITREE_G1_29DOF.value,
+        ):
             normalized_values = deepcopy(action)
             return normalized_values
 
@@ -422,7 +426,9 @@ class StateActionProcessor:
         Raises:
             ValueError: If state is None but required for relative->absolute conversion
         """
-        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+        if embodiment_tag in (
+            EmbodimentTag.UNITREE_G1_29DOF.value,
+        ):
             unnormalized_values = deepcopy(action)
             return unnormalized_values
 

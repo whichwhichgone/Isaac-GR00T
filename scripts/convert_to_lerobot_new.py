@@ -266,7 +266,7 @@ class DataSetArgs:
     )
     """One or more directories, each containing episode_* subfolders."""
 
-    output_dir: Path = Path("/liujinxin/liyifan/Isaac-GR00T/dataset/G1_real_6D_window_cont_rel")
+    output_dir: Path = Path("/liujinxin/liyifan/Isaac-GR00T/dataset/G1_real_6D_window_cont_rel_debug")
     """Output directory for the LeRobot v2 dataset."""
 
     fps: int = 20

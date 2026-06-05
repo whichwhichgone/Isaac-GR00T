@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 import json
 import os
-
+import sys
+sys.path.insert(0,"/liujinxin/liyifan/Isaac-GR00T/")
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.policy.gr00t_policy import Gr00tPolicy
 from gr00t.policy.replay_policy import ReplayPolicy

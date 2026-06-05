@@ -11,9 +11,9 @@ else
     ffmpeg -version | head -n 1
 fi
 
-REPO_NAME="G1_real_6D_window_cont_rel"
+REPO_NAME="G1_real_6D_root_rel"
 DATASET_PATH="/liujinxin/liyifan/Isaac-GR00T/dataset/${REPO_NAME}"
-EMBODIMENT_TAG="UNITREE_G1_29DOF"
+EMBODIMENT_TAG="UNITREE_G1_11X9_MOCAP"
 NUM_GPUS=4
 export WANDB_API_KEY="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"
 export WANDB_ENTITY="liyifansmx-westlake-university"
@@ -26,7 +26,7 @@ echo "NUM_GPUS=${NUM_GPUS}"
 cd /liujinxin/liyifan/Isaac-GR00T
 # source /liujinxin/conda3/bin/activate dreamzero
 
-# python scripts/convert_to_lerobot_new.py \
+# python scripts/create_to_lerobot_v2_mocap.py \
 #     --output_dir "${DATASET_PATH}"
 
 # cp /liujinxin/liyifan/Isaac-GR00T/scripts/modality.json "${DATASET_PATH}/meta"
@@ -52,8 +52,9 @@ torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29500 \
     --warmup_ratio 0.05 \
     --weight_decay 1e-5 \
     --learning_rate 1e-4 \
+    --use_wandb \
     --global_batch_size 128 \
     --dataloader_num_workers 6 \
     --color_jitter_params brightness 0.4 contrast 0.5 saturation 0.6 hue 0.1 \
     --state_dropout_prob 0.1 \
-    --tune_llm
+    --tune_llm \
