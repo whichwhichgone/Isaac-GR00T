@@ -184,10 +184,10 @@ class StateActionProcessor:
                 - Sin/cos encoded groups: (..., 2*D)
                 - Other groups: (..., D)
         """
+        unnormalized_imu = None
         if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
-            normalized_values = deepcopy(state)
-            return normalized_values
-
+            unnormalized_imu = state["imu_joints"].reshape(-1, 35)[:, :6].copy()
+        
         normalized_values = {}
         state = deepcopy(state)  # Avoid modifying input
 
@@ -231,6 +231,12 @@ class StateActionProcessor:
                     normalized = np.clip(normalized, -1.0, 1.0)
 
                 normalized_values[joint_group] = normalized
+
+        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+            imu_joints_shape = normalized_values["imu_joints"].shape
+            imu_joints = normalized_values["imu_joints"].reshape(-1, 35)
+            imu_joints[:, :6] = unnormalized_imu
+            normalized_values["imu_joints"] = imu_joints.reshape(imu_joints_shape)
 
         return normalized_values
 
@@ -369,9 +375,9 @@ class StateActionProcessor:
         Raises:
             ValueError: If state is None but required for relative action conversion
         """
+        unnormalized_xyz_tail = None
         if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
-            normalized_values = deepcopy(action)
-            return normalized_values
+            unnormalized_xyz_tail = action["mocap"].reshape(-1, 102)[:, 36:].copy()
 
         action = deepcopy(action)  # Avoid modifying input
 
@@ -430,6 +436,12 @@ class StateActionProcessor:
                 normalized = np.clip(normalized, -1.0, 1.0)
 
             normalized_values[joint_group] = normalized
+        
+        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+            mocap_shape = normalized_values["mocap"].shape
+            mocap = normalized_values["mocap"].reshape(-1, 102)
+            mocap[:, 36:] = unnormalized_xyz_tail
+            normalized_values["mocap"] = mocap.reshape(mocap_shape)
 
         return normalized_values
 
@@ -461,9 +473,9 @@ class StateActionProcessor:
         Raises:
             ValueError: If state is None but required for relative->absolute conversion
         """
+        raw_mocap_tail = None
         if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
-            unnormalized_values = deepcopy(action)
-            return unnormalized_values
+            raw_mocap_tail = action["mocap"].reshape(-1, 102)[:, 36:].copy()
 
         # Step 1: Unnormalize actions
         unnormalized_values = {}
@@ -488,6 +500,12 @@ class StateActionProcessor:
                 unnormalized = unnormalize_values_minmax(group_values, params)
 
             unnormalized_values[joint_group] = unnormalized
+
+        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
+            mocap_shape = unnormalized_values["mocap"].shape
+            mocap = unnormalized_values["mocap"].reshape(-1, 102)
+            mocap[:, 36:] = raw_mocap_tail
+            unnormalized_values["mocap"] = mocap.reshape(mocap_shape)
 
         # Step 2: Convert relative actions to absolute (if needed)
         action_configs = self.modality_configs[embodiment_tag]["action"].action_configs
