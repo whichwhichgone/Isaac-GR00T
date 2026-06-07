@@ -339,8 +339,18 @@ class Gr00tPolicy(BasePolicy):
         collated_inputs = _rec_to_dtype(collated_inputs, dtype=torch.bfloat16)
 
         # Step 4: Run model inference to predict actions
-        with torch.inference_mode():
-            model_pred = self.model.get_action(**collated_inputs)
+        if "delay_frames" in observation:
+            delay_frames = observation["delay_frames"]
+            previous_actions_rel = observation["previous_actions_rel"]
+            action_executed_steps = observation["action_executed_steps"]
+            model_pred = self.model.get_action_rtc(
+                **collated_inputs,
+                previous_actions_rel = previous_actions_rel,
+                action_executed_steps = action_executed_steps,
+                delay_frames = delay_frames)
+        else: 
+            with torch.inference_mode():
+                model_pred = self.model.get_action(**collated_inputs)
         normalized_action = model_pred["action_pred"].float()
 
         # Step 5: Decode actions from normalized space back to physical units
@@ -355,7 +365,7 @@ class Gr00tPolicy(BasePolicy):
         casted_action = {
             key: value.astype(np.float32) for key, value in unnormalized_action.items()
         }
-        return casted_action, {}
+        return casted_action, normalized_action.cpu().numpy()
 
     def check_action(self, action: dict[str, Any]) -> None:
         """Validate that the action has the correct structure and types.

@@ -14,7 +14,8 @@ import torch.nn.functional as F
 from transformers import AutoConfig, AutoModel, PreTrainedModel
 from transformers.feature_extraction_utils import BatchFeature
 import tree
-
+import math as th
+from typing import Optional
 
 class Gr00tN1d6ActionHead(nn.Module):
     """Action head component for flow matching diffusion policy."""
@@ -363,6 +364,275 @@ class Gr00tN1d6ActionHead(nn.Module):
             }
         )
 
+    @staticmethod
+    def _rtc_softmask(
+        H: int, 
+        d: int, 
+        s: int, 
+        device: torch.device, 
+        dtype: torch.dtype
+        ) -> torch.Tensor:
+        """
+        Build RTC soft mask W.
+
+        Args:
+            H: action_horizon
+            d: inference delay in action steps
+            s: executed steps since last inference started
+
+        Returns:
+            W: [1, H, 1]
+        """
+        if d < 0:
+            raise ValueError(f"d must be >= 0, got {d}")
+        if s < 0:
+            raise ValueError(f"s must be >= 0, got {s}")
+
+        # RTC feasible condition from the paper:
+        # d <= s <= H - d
+        if d > H - d:
+            raise ValueError(
+                f"RTC infeasible: d={d}, H={H}. Need d <= H - d. "
+                f"Increase action_horizon or reduce inference delay."
+            )
+        if not (d <= s <= H - d):
+            raise ValueError(
+                f"RTC requires d <= s <= H - d, got d={d}, s={s}, H={H}."
+            )
+        i = torch.arange(H, device=device, dtype=dtype)
+        W = torch.zeros(H, device=device, dtype=dtype)
+
+        # 1) frozen region: i < d
+        W[: d] = 1.0
+        
+        # 2) intermediate region: d <= i < H - s
+        c = (H -s - i[d :  H - s]) / (H - s - d + 1)
+        W[d : H - s] = c * (torch.exp(c) - 1) / (th.e - 1)
+
+        return W.view(1, H, 1)
+
+    @staticmethod
+    def _rtc_guidance_scale(
+        tau: float,
+        beta: float,
+        device: torch.device,
+        dtype: torch.dtype
+        ) -> torch.Tensor:
+        """
+        Compute min(beta, (1 - tau) / (tau * r_tau^2)).
+        At tau=0, use beta because the raw value is singular and then clipped.
+        """
+        if tau <= 0.0:
+            return torch.tensor(beta, device=device, dtype=dtype)
+
+        tau_t = torch.tensor(tau, device=device, dtype=dtype)
+        one = torch.ones((), device=device, dtype=dtype)
+        eps = torch.tensor(1e-6, device=device, dtype=dtype)
+
+        r2 = ((one - tau_t) ** 2) / (tau_t**2 + (one - tau_t) ** 2 + eps)
+        raw = (one - tau_t) / (tau_t * r2 + eps)
+        return torch.clamp(raw, max=beta)
+
+    def get_action_with_features_rtc(
+        self,
+        backbone_features: torch.Tensor,
+        state_features: torch.Tensor,
+        embodiment_id: torch.Tensor,
+        backbone_output: BatchFeature,
+        rtc_prev_actions: Optional[torch.Tensor] = None,
+        rtc_executed_steps: Optional[int] = None,
+        rtc_delay_steps: Optional[int] = None,
+        rtc_beta: float = 1.0,
+    ) -> BatchFeature:
+        """
+        Generate actions using flow matching with optional RTC guidance.
+
+        Args:
+            backbone_features:
+                [B, seq_len, backbone_embedding_dim]
+
+            state_features:
+                [B, state_horizon, input_embedding_dim]
+
+            embodiment_id:
+                [B]
+
+            backbone_output:
+                Output from the backbone model.
+
+            rtc_prev_actions:
+                Previous full action chunk, shape [B, H, action_dim].
+                This should be the previous model-predicted chunk, not interpolated actions.
+                If None, this function falls back to normal flow inference.
+
+            rtc_executed_steps:
+                s in the paper. Number of action steps already executed from rtc_prev_actions
+                when this new inference starts.
+
+            rtc_delay_steps:
+                d in the paper. Estimated inference delay measured in action steps.
+
+            rtc_beta:
+                Maximum guidance weight beta.
+        """
+        # In RTC, we need gradients w.r.t. actions, but not w.r.t. backbone/state features.
+        vl_embeds = backbone_features.detach()
+        state_features = state_features.detach()
+
+        batch_size = vl_embeds.shape[0]
+        device = vl_embeds.device
+        dtype = vl_embeds.dtype
+        H = self.config.action_horizon
+
+        actions = torch.randn(
+            size=(batch_size, H, self.action_dim),
+            dtype=dtype,
+            device=device,
+        )
+
+        dt = 1.0 / self.num_inference_timesteps
+
+        use_rtc = (
+            rtc_prev_actions is not None
+            and rtc_executed_steps is not None
+            and rtc_delay_steps is not None
+        )
+
+        if use_rtc:
+            s = int(rtc_executed_steps)
+            d = int(rtc_delay_steps)
+
+            if rtc_prev_actions.shape != (batch_size, H, self.action_dim):
+                raise ValueError(
+                    f"rtc_prev_actions shape error: expected "
+                    f"{(batch_size, H, self.action_dim)}, got {rtc_prev_actions.shape}"
+                )
+            def to_tensor(x, device, dtype):
+                if isinstance(x, torch.Tensor):
+                    return x.detach().to(device=device, dtype=dtype)
+                return torch.as_tensor(x, device=device, dtype=dtype)
+            rtc_prev_actions = to_tensor(rtc_prev_actions, device=device, dtype=dtype)
+            A_prev = rtc_prev_actions.detach().to(device=device, dtype=dtype)
+
+            W = self._rtc_softmask(
+                H=H,
+                d=d,
+                s=s,
+                device=device,
+                dtype=dtype,
+            )
+        else:
+            A_prev = None
+            W = None
+
+        for t in range(self.num_inference_timesteps):
+            t_cont = t / float(self.num_inference_timesteps)
+            t_discretized = int(t_cont * self.num_timestep_buckets)
+
+            timesteps_tensor = torch.full(
+                size=(batch_size,),
+                fill_value=t_discretized,
+                device=device,
+                dtype=torch.long,
+            )
+
+            if use_rtc:
+                # Need graph from actions -> pred_velocity -> A_hat_1.
+                actions = actions.detach().requires_grad_(True)
+            else:
+                actions = actions.detach()
+
+            def forward_velocity(action_input: torch.Tensor) -> torch.Tensor:
+                """
+                Compute v_pi(action_input, observation, tau).
+                Returns:
+                    pred_velocity: [B, H, action_dim]
+                """
+                action_features = self.action_encoder(
+                    action_input,
+                    timesteps_tensor,
+                    embodiment_id,
+                )
+
+                if self.config.add_pos_embed:
+                    pos_ids = torch.arange(
+                        action_features.shape[1],
+                        dtype=torch.long,
+                        device=device,
+                    )
+                    pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
+                    action_features = action_features + pos_embs
+
+                sa_embs = torch.cat((state_features, action_features), dim=1)
+
+                if self.config.use_alternate_vl_dit:
+                    model_output = self.model(
+                        hidden_states=sa_embs,
+                        encoder_hidden_states=vl_embeds,
+                        timestep=timesteps_tensor,
+                        image_mask=backbone_output.image_mask,
+                        backbone_attention_mask=backbone_output.backbone_attention_mask,
+                    )
+                else:
+                    model_output = self.model(
+                        hidden_states=sa_embs,
+                        encoder_hidden_states=vl_embeds,
+                        timestep=timesteps_tensor,
+                    )
+
+                pred = self.action_decoder(model_output, embodiment_id)
+                pred_velocity = pred[:, -H:, :]
+                return pred_velocity
+
+            if use_rtc:
+                # Original flow velocity.
+                pred_velocity = forward_velocity(actions)
+
+                # Eq. 3:
+                # A_hat_1 = A_tau + (1 - tau) * v_pi(A_tau, o, tau)
+                A_hat_1 = actions + (1.0 - t_cont) * pred_velocity
+
+                # Eq. 2 weighted error:
+                # e = (A_prev - A_hat_1)^T diag(W)
+                grad_outputs = (A_prev - A_hat_1) * W
+
+                # Vector-Jacobian product:
+                # g = e * d A_hat_1 / d A_tau
+                g = torch.autograd.grad(
+                    outputs=A_hat_1,
+                    inputs=actions,
+                    grad_outputs=grad_outputs,
+                    retain_graph=False,
+                    create_graph=False,
+                    only_inputs=True,
+                )[0]
+
+                guidance_scale = self._rtc_guidance_scale(
+                    tau=t_cont,
+                    beta=rtc_beta,
+                    device=device,
+                    dtype=dtype,
+                )
+
+                # Eq. 1 with RTC guidance:
+                # A_{tau+dt} = A_tau + dt * (v_pi + scale * g)
+                with torch.no_grad():
+                    actions = actions + dt * (pred_velocity + guidance_scale * g)
+
+            else:
+                # Normal non-RTC flow inference.
+                with torch.no_grad():
+                    pred_velocity = forward_velocity(actions)
+                    actions = actions + dt * pred_velocity
+
+        return BatchFeature(
+            data={
+                "action_pred": actions.detach(),
+                "backbone_features": vl_embeds,
+                "state_features": state_features,
+            }
+        )
+
     @torch.no_grad()
     def get_action(self, backbone_output: BatchFeature, action_input: BatchFeature) -> BatchFeature:
         """
@@ -386,6 +656,35 @@ class Gr00tN1d6ActionHead(nn.Module):
             state_features=features.state_features,
             embodiment_id=action_input.embodiment_id,
             backbone_output=backbone_output,
+        )
+
+    @torch.no_grad()
+    def get_action_rtc(self, backbone_output: BatchFeature, action_input: BatchFeature, previous_actions_rel, action_executed_steps, delay_frames, beta=5.0) -> BatchFeature:
+        """
+        Generate actions using the flow matching diffusion process.
+
+        Args:
+            backbone_output: Output from the backbone model containing:
+                - backbone_features: [B, seq_len, backbone_embedding_dim]
+                - backbone_attention_mask: [B, seq_len]
+            action_input: Input containing:
+                - state: [B, state_dim]
+                - embodiment_id: [B] (embodiment IDs)
+
+        Returns:
+            BatchFeature containing:
+                - action_pred: [B, action_horizon, action_dim] predicted actions
+        """
+        features = self._encode_features(backbone_output, action_input)
+        return self.get_action_with_features_rtc(
+            backbone_features=features.backbone_features,
+            state_features=features.state_features,
+            embodiment_id=action_input.embodiment_id,
+            backbone_output=backbone_output,
+            rtc_prev_actions=previous_actions_rel,
+            rtc_executed_steps=action_executed_steps,
+            rtc_delay_steps=delay_frames,
+            rtc_beta=beta
         )
 
     @property
@@ -522,6 +821,24 @@ class Gr00tN1d6(PreTrainedModel):
         # Forward through backbone
         backbone_outputs = self.backbone(backbone_inputs)
         action_outputs = self.action_head.get_action(backbone_outputs, action_inputs)
+
+        return action_outputs
+
+    def get_action_rtc(self, inputs: dict, previous_actions_rel, action_executed_steps, delay_frames, beta=5.0) -> BatchFeature:
+        """
+        Generate actions using the complete model.
+        """
+        # Prepare inputs for backbone and action head
+        backbone_inputs, action_inputs = self.prepare_input(inputs)
+
+        # Forward through backbone
+        backbone_outputs = self.backbone(backbone_inputs)
+        action_outputs = self.action_head.get_action_rtc(
+            backbone_output=backbone_outputs, 
+            action_input=action_inputs, 
+            previous_actions_rel=previous_actions_rel, 
+            action_executed_steps=action_executed_steps, 
+            delay_frames=delay_frames)
 
         return action_outputs
 
