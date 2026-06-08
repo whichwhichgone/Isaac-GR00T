@@ -339,16 +339,64 @@ class Gr00tPolicy(BasePolicy):
         collated_inputs = _rec_to_dtype(collated_inputs, dtype=torch.bfloat16)
 
         # Step 4: Run model inference to predict actions
-        if "delay_frames" in observation:
-            delay_frames = observation["delay_frames"]
-            previous_actions_rel = observation["previous_actions_rel"]
-            action_executed_steps = observation["action_executed_steps"]
+        rtc_keys = {"delay_frames", "previous_actions_rel", "action_executed_steps"}
+        provided_rtc_keys = rtc_keys.intersection(observation)
+        if provided_rtc_keys and provided_rtc_keys != rtc_keys:
+            missing_rtc_keys = sorted(rtc_keys - provided_rtc_keys)
+            raise ValueError(f"Incomplete RTC inputs; missing keys: {missing_rtc_keys}")
+
+        if provided_rtc_keys:
+            delay_frames = int(np.asarray(observation["delay_frames"]).item())
+            action_executed_steps = int(
+                np.asarray(observation["action_executed_steps"]).item()
+            )
+            previous_actions_rel = np.asarray(
+                observation["previous_actions_rel"],
+                dtype=np.float32,
+            )
+            rtc_beta = float((options or {}).get("rtc_beta", 5.0))
+
+            if delay_frames < 0 or action_executed_steps < 0:
+                raise ValueError(
+                    "RTC delay_frames and action_executed_steps must be non-negative, "
+                    f"got d={delay_frames}, s={action_executed_steps}"
+                )
+            action_head = self.model.action_head
+            expected_rtc_shape = (
+                len(unbatched_observations),
+                action_head.action_horizon,
+                action_head.action_dim,
+            )
+            if previous_actions_rel.shape != expected_rtc_shape:
+                raise ValueError(
+                    "RTC previous_actions_rel must contain the full normalized model chunk "
+                    f"with shape {expected_rtc_shape}, got {previous_actions_rel.shape}"
+                )
+            if not (
+                delay_frames
+                <= action_executed_steps
+                <= action_head.action_horizon - delay_frames
+            ):
+                raise ValueError(
+                    "RTC requires d <= s <= H - d, "
+                    f"got d={delay_frames}, s={action_executed_steps}, "
+                    f"H={action_head.action_horizon}"
+                )
+            if not np.isfinite(previous_actions_rel).all():
+                raise ValueError(
+                    "RTC previous_actions_rel must contain only finite values"
+                )
+            if not np.isfinite(rtc_beta) or rtc_beta <= 0:
+                raise ValueError(f"rtc_beta must be positive, got {rtc_beta}")
+
             model_pred = self.model.get_action_rtc(
                 **collated_inputs,
-                previous_actions_rel = previous_actions_rel,
-                action_executed_steps = action_executed_steps,
-                delay_frames = delay_frames)
-        else: 
+                previous_actions_rel=previous_actions_rel,
+                action_executed_steps=action_executed_steps,
+                delay_frames=delay_frames,
+                beta=rtc_beta,
+            )
+        else:
             with torch.inference_mode():
                 model_pred = self.model.get_action(**collated_inputs)
         normalized_action = model_pred["action_pred"].float()
@@ -655,24 +703,24 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
             action_arr = action[parsed_key]
 
             # Verify data type is numpy array
-            assert isinstance(action_arr, np.ndarray), (
-                f"Action key '{action_key}' must be a numpy array. Got {type(action_arr)}"
-            )
+            assert isinstance(
+                action_arr, np.ndarray
+            ), f"Action key '{action_key}' must be a numpy array. Got {type(action_arr)}"
 
             # Verify dtype is float32 (standard for continuous actions)
-            assert action_arr.dtype == np.float32, (
-                f"Action key '{action_key}' must be a numpy array of type np.float32. Got {action_arr.dtype}"
-            )
+            assert (
+                action_arr.dtype == np.float32
+            ), f"Action key '{action_key}' must be a numpy array of type np.float32. Got {action_arr.dtype}"
 
             # Verify shape has 3 dimensions: (B, T, D)
-            assert action_arr.ndim == 3, (
-                f"Action key '{action_key}' must be a numpy array of shape (B, T, D), got {action_arr.shape}"
-            )
+            assert (
+                action_arr.ndim == 3
+            ), f"Action key '{action_key}' must be a numpy array of shape (B, T, D), got {action_arr.shape}"
 
             # Verify action horizon matches the expected temporal dimension from config
-            assert action_arr.shape[1] == len(modality_configs["action"].delta_indices), (
-                f"Action key '{action_key}'s horizon must be {len(modality_configs['action'].delta_indices)}. Got {action_arr.shape[1]}"
-            )
+            assert action_arr.shape[1] == len(
+                modality_configs["action"].delta_indices
+            ), f"Action key '{action_key}'s horizon must be {len(modality_configs['action'].delta_indices)}. Got {action_arr.shape[1]}"
 
     def get_modality_config(self) -> dict[str, ModalityConfig]:
         """Get the modality configuration from the underlying policy.

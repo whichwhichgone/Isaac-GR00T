@@ -17,6 +17,7 @@ import tree
 import math as th
 from typing import Optional
 
+
 class Gr00tN1d6ActionHead(nn.Module):
     """Action head component for flow matching diffusion policy."""
 
@@ -366,12 +367,12 @@ class Gr00tN1d6ActionHead(nn.Module):
 
     @staticmethod
     def _rtc_softmask(
-        H: int, 
-        d: int, 
-        s: int, 
-        device: torch.device, 
-        dtype: torch.dtype
-        ) -> torch.Tensor:
+        H: int,
+        d: int,
+        s: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
         """
         Build RTC soft mask W.
 
@@ -396,32 +397,56 @@ class Gr00tN1d6ActionHead(nn.Module):
                 f"Increase action_horizon or reduce inference delay."
             )
         if not (d <= s <= H - d):
-            raise ValueError(
-                f"RTC requires d <= s <= H - d, got d={d}, s={s}, H={H}."
-            )
+            raise ValueError(f"RTC requires d <= s <= H - d, got d={d}, s={s}, H={H}.")
         i = torch.arange(H, device=device, dtype=dtype)
         W = torch.zeros(H, device=device, dtype=dtype)
 
         # 1) frozen region: i < d
-        W[: d] = 1.0
-        
+        W[:d] = 1.0
+
         # 2) intermediate region: d <= i < H - s
-        c = (H -s - i[d :  H - s]) / (H - s - d + 1)
-        W[d : H - s] = c * (torch.exp(c) - 1) / (th.e - 1)
+        overlap_end = H - s
+        if overlap_end > d:
+            c = (overlap_end - i[d:overlap_end]) / (overlap_end - d + 1)
+            W[d:overlap_end] = c * (torch.exp(c) - 1) / (th.e - 1)
 
         return W.view(1, H, 1)
+
+    @staticmethod
+    def _rtc_align_previous_actions(
+        previous_actions: torch.Tensor,
+        executed_steps: int,
+    ) -> torch.Tensor:
+        """Align an old action chunk to the new inference start time."""
+        if previous_actions.ndim != 3:
+            raise ValueError(
+                "previous_actions must have shape (B, H, D), "
+                f"got {tuple(previous_actions.shape)}"
+            )
+
+        H = previous_actions.shape[1]
+        if not 0 <= executed_steps <= H:
+            raise ValueError(
+                f"executed_steps must be in [0, {H}], got {executed_steps}"
+            )
+
+        aligned_actions = torch.zeros_like(previous_actions)
+        aligned_actions[:, : H - executed_steps] = previous_actions[:, executed_steps:]
+        return aligned_actions
 
     @staticmethod
     def _rtc_guidance_scale(
         tau: float,
         beta: float,
         device: torch.device,
-        dtype: torch.dtype
-        ) -> torch.Tensor:
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
         """
         Compute min(beta, (1 - tau) / (tau * r_tau^2)).
         At tau=0, use beta because the raw value is singular and then clipped.
         """
+        if beta <= 0:
+            raise ValueError(f"beta must be positive, got {beta}")
         if tau <= 0.0:
             return torch.tensor(beta, device=device, dtype=dtype)
 
@@ -461,7 +486,7 @@ class Gr00tN1d6ActionHead(nn.Module):
                 Output from the backbone model.
 
             rtc_prev_actions:
-                Previous full action chunk, shape [B, H, action_dim].
+                Previous full, unaligned action chunk, shape [B, H, action_dim].
                 This should be the previous model-predicted chunk, not interpolated actions.
                 If None, this function falls back to normal flow inference.
 
@@ -492,27 +517,33 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         dt = 1.0 / self.num_inference_timesteps
 
-        use_rtc = (
-            rtc_prev_actions is not None
-            and rtc_executed_steps is not None
-            and rtc_delay_steps is not None
-        )
+        rtc_inputs = (rtc_prev_actions, rtc_executed_steps, rtc_delay_steps)
+        provided_rtc_inputs = sum(value is not None for value in rtc_inputs)
+        if provided_rtc_inputs not in (0, len(rtc_inputs)):
+            raise ValueError(
+                "RTC requires rtc_prev_actions, rtc_executed_steps, and rtc_delay_steps "
+                "to be provided together."
+            )
+        use_rtc = provided_rtc_inputs == len(rtc_inputs)
 
         if use_rtc:
             s = int(rtc_executed_steps)
             d = int(rtc_delay_steps)
 
+            rtc_prev_actions = torch.as_tensor(
+                rtc_prev_actions,
+                device=device,
+                dtype=dtype,
+            ).detach()
             if rtc_prev_actions.shape != (batch_size, H, self.action_dim):
                 raise ValueError(
                     f"rtc_prev_actions shape error: expected "
                     f"{(batch_size, H, self.action_dim)}, got {rtc_prev_actions.shape}"
                 )
-            def to_tensor(x, device, dtype):
-                if isinstance(x, torch.Tensor):
-                    return x.detach().to(device=device, dtype=dtype)
-                return torch.as_tensor(x, device=device, dtype=dtype)
-            rtc_prev_actions = to_tensor(rtc_prev_actions, device=device, dtype=dtype)
-            A_prev = rtc_prev_actions.detach().to(device=device, dtype=dtype)
+
+            # Align the old chunk to the new inference start time as defined by RTC:
+            # A_prev[i] = A_old[s + i], right-padded with zeros outside the overlap.
+            A_prev = self._rtc_align_previous_actions(rtc_prev_actions, s)
 
             W = self._rtc_softmask(
                 H=H,
@@ -535,12 +566,6 @@ class Gr00tN1d6ActionHead(nn.Module):
                 device=device,
                 dtype=torch.long,
             )
-
-            if use_rtc:
-                # Need graph from actions -> pred_velocity -> A_hat_1.
-                actions = actions.detach().requires_grad_(True)
-            else:
-                actions = actions.detach()
 
             def forward_velocity(action_input: torch.Tensor) -> torch.Tensor:
                 """
@@ -585,27 +610,31 @@ class Gr00tN1d6ActionHead(nn.Module):
                 return pred_velocity
 
             if use_rtc:
-                # Original flow velocity.
-                pred_velocity = forward_velocity(actions)
+                with torch.enable_grad():
+                    # Need graph from actions -> pred_velocity -> A_hat_1.
+                    actions = actions.detach().requires_grad_(True)
 
-                # Eq. 3:
-                # A_hat_1 = A_tau + (1 - tau) * v_pi(A_tau, o, tau)
-                A_hat_1 = actions + (1.0 - t_cont) * pred_velocity
+                    # Original flow velocity.
+                    pred_velocity = forward_velocity(actions)
 
-                # Eq. 2 weighted error:
-                # e = (A_prev - A_hat_1)^T diag(W)
-                grad_outputs = (A_prev - A_hat_1) * W
+                    # Eq. 3:
+                    # A_hat_1 = A_tau + (1 - tau) * v_pi(A_tau, o, tau)
+                    A_hat_1 = actions + (1.0 - t_cont) * pred_velocity
 
-                # Vector-Jacobian product:
-                # g = e * d A_hat_1 / d A_tau
-                g = torch.autograd.grad(
-                    outputs=A_hat_1,
-                    inputs=actions,
-                    grad_outputs=grad_outputs,
-                    retain_graph=False,
-                    create_graph=False,
-                    only_inputs=True,
-                )[0]
+                    # Eq. 2 weighted error:
+                    # e = (A_prev - A_hat_1)^T diag(W)
+                    grad_outputs = (A_prev - A_hat_1) * W
+
+                    # Vector-Jacobian product:
+                    # g = e * d A_hat_1 / d A_tau
+                    g = torch.autograd.grad(
+                        outputs=A_hat_1,
+                        inputs=actions,
+                        grad_outputs=grad_outputs,
+                        retain_graph=False,
+                        create_graph=False,
+                        only_inputs=True,
+                    )[0]
 
                 guidance_scale = self._rtc_guidance_scale(
                     tau=t_cont,
@@ -622,6 +651,7 @@ class Gr00tN1d6ActionHead(nn.Module):
             else:
                 # Normal non-RTC flow inference.
                 with torch.no_grad():
+                    actions = actions.detach()
                     pred_velocity = forward_velocity(actions)
                     actions = actions + dt * pred_velocity
 
@@ -658,8 +688,15 @@ class Gr00tN1d6ActionHead(nn.Module):
             backbone_output=backbone_output,
         )
 
-    @torch.no_grad()
-    def get_action_rtc(self, backbone_output: BatchFeature, action_input: BatchFeature, previous_actions_rel, action_executed_steps, delay_frames, beta=5.0) -> BatchFeature:
+    def get_action_rtc(
+        self,
+        backbone_output: BatchFeature,
+        action_input: BatchFeature,
+        previous_actions_rel,
+        action_executed_steps,
+        delay_frames,
+        beta=5.0,
+    ) -> BatchFeature:
         """
         Generate actions using the flow matching diffusion process.
 
@@ -675,7 +712,8 @@ class Gr00tN1d6ActionHead(nn.Module):
             BatchFeature containing:
                 - action_pred: [B, action_horizon, action_dim] predicted actions
         """
-        features = self._encode_features(backbone_output, action_input)
+        with torch.no_grad():
+            features = self._encode_features(backbone_output, action_input)
         return self.get_action_with_features_rtc(
             backbone_features=features.backbone_features,
             state_features=features.state_features,
@@ -684,7 +722,7 @@ class Gr00tN1d6ActionHead(nn.Module):
             rtc_prev_actions=previous_actions_rel,
             rtc_executed_steps=action_executed_steps,
             rtc_delay_steps=delay_frames,
-            rtc_beta=beta
+            rtc_beta=beta,
         )
 
     @property
@@ -824,7 +862,14 @@ class Gr00tN1d6(PreTrainedModel):
 
         return action_outputs
 
-    def get_action_rtc(self, inputs: dict, previous_actions_rel, action_executed_steps, delay_frames, beta=5.0) -> BatchFeature:
+    def get_action_rtc(
+        self,
+        inputs: dict,
+        previous_actions_rel,
+        action_executed_steps,
+        delay_frames,
+        beta=5.0,
+    ) -> BatchFeature:
         """
         Generate actions using the complete model.
         """
@@ -832,13 +877,16 @@ class Gr00tN1d6(PreTrainedModel):
         backbone_inputs, action_inputs = self.prepare_input(inputs)
 
         # Forward through backbone
-        backbone_outputs = self.backbone(backbone_inputs)
+        with torch.no_grad():
+            backbone_outputs = self.backbone(backbone_inputs)
         action_outputs = self.action_head.get_action_rtc(
-            backbone_output=backbone_outputs, 
-            action_input=action_inputs, 
-            previous_actions_rel=previous_actions_rel, 
-            action_executed_steps=action_executed_steps, 
-            delay_frames=delay_frames)
+            backbone_output=backbone_outputs,
+            action_input=action_inputs,
+            previous_actions_rel=previous_actions_rel,
+            action_executed_steps=action_executed_steps,
+            delay_frames=delay_frames,
+            beta=beta,
+        )
 
         return action_outputs
 
