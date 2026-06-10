@@ -88,6 +88,7 @@ class Gr00tN1d6ActionHead(nn.Module):
         self.set_trainable_parameters(
             config.tune_projector, config.tune_diffusion_model, config.tune_vlln
         )
+        self.rtc_prev_actions = None
 
     def set_trainable_parameters(
         self, tune_projector: bool, tune_diffusion_model: bool, tune_vlln: bool
@@ -357,6 +358,7 @@ class Gr00tN1d6ActionHead(nn.Module):
 
             # Update actions using euler integration.
             actions = actions + dt * pred_velocity
+        self.rtc_prev_actions = actions.detach().clone()
         return BatchFeature(
             data={
                 "action_pred": actions,
@@ -464,7 +466,6 @@ class Gr00tN1d6ActionHead(nn.Module):
         state_features: torch.Tensor,
         embodiment_id: torch.Tensor,
         backbone_output: BatchFeature,
-        rtc_prev_actions: Optional[torch.Tensor] = None,
         rtc_executed_steps: Optional[int] = None,
         rtc_delay_steps: Optional[int] = None,
         rtc_beta: float = 1.0,
@@ -517,11 +518,11 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         dt = 1.0 / self.num_inference_timesteps
 
-        rtc_inputs = (rtc_prev_actions, rtc_executed_steps, rtc_delay_steps)
+        rtc_inputs = (rtc_executed_steps, rtc_delay_steps)
         provided_rtc_inputs = sum(value is not None for value in rtc_inputs)
         if provided_rtc_inputs not in (0, len(rtc_inputs)):
             raise ValueError(
-                "RTC requires rtc_prev_actions, rtc_executed_steps, and rtc_delay_steps "
+                "RTC requires rtc_executed_steps, and rtc_delay_steps "
                 "to be provided together."
             )
         use_rtc = provided_rtc_inputs == len(rtc_inputs)
@@ -530,20 +531,20 @@ class Gr00tN1d6ActionHead(nn.Module):
             s = int(rtc_executed_steps)
             d = int(rtc_delay_steps)
 
-            rtc_prev_actions = torch.as_tensor(
-                rtc_prev_actions,
+            self.rtc_prev_actions = torch.as_tensor(
+                self.rtc_prev_actions,
                 device=device,
                 dtype=dtype,
             ).detach()
-            if rtc_prev_actions.shape != (batch_size, H, self.action_dim):
+            if self.rtc_prev_actions.shape != (batch_size, H, self.action_dim):
                 raise ValueError(
-                    f"rtc_prev_actions shape error: expected "
-                    f"{(batch_size, H, self.action_dim)}, got {rtc_prev_actions.shape}"
+                    f"self.rtc_prev_actions shape error: expected "
+                    f"{(batch_size, H, self.action_dim)}, got {self.rtc_prev_actions.shape}"
                 )
 
             # Align the old chunk to the new inference start time as defined by RTC:
             # A_prev[i] = A_old[s + i], right-padded with zeros outside the overlap.
-            A_prev = self._rtc_align_previous_actions(rtc_prev_actions, s)
+            A_prev = self._rtc_align_previous_actions(self.rtc_prev_actions, s)
 
             W = self._rtc_softmask(
                 H=H,
@@ -692,7 +693,6 @@ class Gr00tN1d6ActionHead(nn.Module):
         self,
         backbone_output: BatchFeature,
         action_input: BatchFeature,
-        previous_actions_rel,
         action_executed_steps,
         delay_frames,
         beta=5.0,
@@ -719,7 +719,6 @@ class Gr00tN1d6ActionHead(nn.Module):
             state_features=features.state_features,
             embodiment_id=action_input.embodiment_id,
             backbone_output=backbone_output,
-            rtc_prev_actions=previous_actions_rel,
             rtc_executed_steps=action_executed_steps,
             rtc_delay_steps=delay_frames,
             rtc_beta=beta,
@@ -865,7 +864,6 @@ class Gr00tN1d6(PreTrainedModel):
     def get_action_rtc(
         self,
         inputs: dict,
-        previous_actions_rel,
         action_executed_steps,
         delay_frames,
         beta=5.0,
@@ -882,7 +880,6 @@ class Gr00tN1d6(PreTrainedModel):
         action_outputs = self.action_head.get_action_rtc(
             backbone_output=backbone_outputs,
             action_input=action_inputs,
-            previous_actions_rel=previous_actions_rel,
             action_executed_steps=action_executed_steps,
             delay_frames=delay_frames,
             beta=beta,

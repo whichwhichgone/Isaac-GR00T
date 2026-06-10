@@ -93,23 +93,32 @@ PLACEHOLDER_IMAGE = np.zeros(IMAGE_SHAPE, dtype=np.uint8)
 # =========================
 @dataclass
 class Config:
-    dataset_dir: list[str] = field(
+    dataset_dir: list[Path] = field(
         default_factory=lambda: [
             Path("/liujinxin/dataset/piper/G1/0518_clean_desk_place_sofa_g1_B"),
             Path("/liujinxin/dataset/piper/G1/0518_clean_desk_place_sofa_g1_fast"),
             Path("/liujinxin/dataset/piper/G1/0519_clean_desk_place_sofa_g1_B"),
             Path("/liujinxin/dataset/piper/G1/0520_clean_desk_place_sofa_g1_B"),
             Path("/liujinxin/dataset/piper/G1/0521_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0525_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0526_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0527_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0528_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0529_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0601_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0602_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0603_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0604_clean_desk_place_sofa_g1_B"),
         ]
     )
 
     modality: str = "/liujinxin/liyifan/Isaac-GR00T/scripts/modality.json"
 
     repo_id: str = "lerobot_datasets/g1_motion"   # 数据集所在文件夹
-    repo_name: str = "2026-05-24_clean_desk_place_sofa_g1_fast"     # 输出的lerobot数据集名称
+    repo_name: str = "0518-0604_clean_desk_place_sofa_g1_fast_root_rel"     # 输出的lerobot数据集名称
 
     robot_type: str = "unitree_g1_29dof"
-    fps: int = 100
+    fps: int = 50
 
     output_dir: str | None = None
 

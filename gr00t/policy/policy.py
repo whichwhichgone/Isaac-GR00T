@@ -84,10 +84,10 @@ class BasePolicy(ABC):
         """
         if self.strict:
             self.check_observation(observation)
-        action, normalized_action = self._get_action(observation, options)
+        action, info = self._get_action(observation, options)
         if self.strict:
             self.check_action(action)
-        return action, normalized_action
+        return action, info
 
     @abstractmethod
     def reset(self, options: dict[str, Any] | None = None) -> dict[str, Any]:
