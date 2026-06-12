@@ -100,6 +100,7 @@ class Gr00tPolicy(BasePolicy):
         assert len(language_keys) == 1, "Only one language key is supported"
         assert len(language_delta_indices) == 1, "Only one language delta index is supported"
         self.language_key = language_keys[0]
+        self.rtc_prev_action = None
 
     def _unbatch_observation(self, value: dict[str, Any]) -> list[dict[str, Any]]:
         """Unbatch a batched observation into a list of single observations.
@@ -169,10 +170,12 @@ class Gr00tPolicy(BasePolicy):
         """
         # Check that observation contains all required top-level modality keys
         for modality in ["video", "state", "language"]:
-            assert modality in observation, f"Observation must contain a '{modality}' key"
-            assert isinstance(observation[modality], dict), (
-                f"Observation '{modality}' must be a dictionary. Got {type(observation[modality])}: {observation[modality]}"
-            )
+            assert (
+                modality in observation
+            ), f"Observation must contain a '{modality}' key"
+            assert isinstance(
+                observation[modality], dict
+            ), f"Observation '{modality}' must be a dictionary. Got {type(observation[modality])}: {observation[modality]}"
 
         # Track batch size across modalities to ensure consistency
         bs = -1
@@ -184,41 +187,41 @@ class Gr00tPolicy(BasePolicy):
             if bs == -1:
                 bs = len(observation["video"][video_key])
             else:
-                assert len(observation["video"][video_key]) == bs, (
-                    f"Video key '{video_key}' must have batch size {bs}. Got {len(observation['video'][video_key])}"
-                )
+                assert (
+                    len(observation["video"][video_key]) == bs
+                ), f"Video key '{video_key}' must have batch size {bs}. Got {len(observation['video'][video_key])}"
 
             # Check that the expected video key exists in the observation
-            assert video_key in observation["video"], (
-                f"Video key '{video_key}' must be in observation"
-            )
+            assert (
+                video_key in observation["video"]
+            ), f"Video key '{video_key}' must be in observation"
 
             batched_video = observation["video"][video_key]
 
             # Verify data type is numpy array
-            assert isinstance(batched_video, np.ndarray), (
-                f"Video key '{video_key}' must be a numpy array. Got {type(batched_video)}"
-            )
+            assert isinstance(
+                batched_video, np.ndarray
+            ), f"Video key '{video_key}' must be a numpy array. Got {type(batched_video)}"
 
             # Verify dtype is uint8 (standard for image data, range 0-255)
-            assert batched_video.dtype == np.uint8, (
-                f"Video key '{video_key}' must be a numpy array of type np.uint8. Got {batched_video.dtype}"
-            )
+            assert (
+                batched_video.dtype == np.uint8
+            ), f"Video key '{video_key}' must be a numpy array of type np.uint8. Got {batched_video.dtype}"
 
             # Verify shape has 5 dimensions: (B, T, H, W, C)
-            assert batched_video.ndim == 5, (
-                f"Video key '{video_key}' must be a numpy array of shape (B, T, H, W, C), got {batched_video.shape}"
-            )
+            assert (
+                batched_video.ndim == 5
+            ), f"Video key '{video_key}' must be a numpy array of shape (B, T, H, W, C), got {batched_video.shape}"
 
             # Verify temporal dimension matches the expected horizon from config
-            assert batched_video.shape[1] == len(self.modality_configs["video"].delta_indices), (
-                f"Video key '{video_key}'s horizon must be {len(self.modality_configs['video'].delta_indices)}. Got {batched_video.shape[1]}"
-            )
+            assert batched_video.shape[1] == len(
+                self.modality_configs["video"].delta_indices
+            ), f"Video key '{video_key}'s horizon must be {len(self.modality_configs['video'].delta_indices)}. Got {batched_video.shape[1]}"
 
             # Verify channel dimension is 3 (RGB images)
-            assert batched_video.shape[-1] == 3, (
-                f"Video key '{video_key}'s channel 'C' must be 3. Got {batched_video.shape[-1]}"
-            )
+            assert (
+                batched_video.shape[-1] == 3
+            ), f"Video key '{video_key}'s channel 'C' must be 3. Got {batched_video.shape[-1]}"
 
         # ===== STATE VALIDATION =====
         # Validate each state stream defined in the modality config
@@ -227,36 +230,36 @@ class Gr00tPolicy(BasePolicy):
             if bs == -1:
                 bs = len(observation["state"][state_key])
             else:
-                assert len(observation["state"][state_key]) == bs, (
-                    f"State key '{state_key}' must have batch size {bs}. Got {len(observation['state'][state_key])}"
-                )
+                assert (
+                    len(observation["state"][state_key]) == bs
+                ), f"State key '{state_key}' must have batch size {bs}. Got {len(observation['state'][state_key])}"
 
             # Check that the expected state key exists in the observation
-            assert state_key in observation["state"], (
-                f"State key '{state_key}' must be in observation"
-            )
+            assert (
+                state_key in observation["state"]
+            ), f"State key '{state_key}' must be in observation"
 
             batched_state = observation["state"][state_key]
 
             # Verify data type is numpy array
-            assert isinstance(batched_state, np.ndarray), (
-                f"State key '{state_key}' must be a numpy array. Got {type(batched_state)}"
-            )
+            assert isinstance(
+                batched_state, np.ndarray
+            ), f"State key '{state_key}' must be a numpy array. Got {type(batched_state)}"
 
             # Verify dtype is float32 (standard for continuous state values)
-            assert batched_state.dtype == np.float32, (
-                f"State key '{state_key}' must be a numpy array of type np.float32. Got {batched_state.dtype}"
-            )
+            assert (
+                batched_state.dtype == np.float32
+            ), f"State key '{state_key}' must be a numpy array of type np.float32. Got {batched_state.dtype}"
 
             # Verify shape has 3 dimensions: (B, T, D)
-            assert batched_state.ndim == 3, (
-                f"State key '{state_key}' must be a numpy array of shape (B, T, D), got {batched_state.shape}"
-            )
+            assert (
+                batched_state.ndim == 3
+            ), f"State key '{state_key}' must be a numpy array of shape (B, T, D), got {batched_state.shape}"
 
             # Verify temporal dimension matches the expected horizon from config
-            assert batched_state.shape[1] == len(self.modality_configs["state"].delta_indices), (
-                f"State key '{state_key}'s horizon must be {len(self.modality_configs['state'].delta_indices)}. Got {batched_state.shape[1]}"
-            )
+            assert batched_state.shape[1] == len(
+                self.modality_configs["state"].delta_indices
+            ), f"State key '{state_key}'s horizon must be {len(self.modality_configs['state'].delta_indices)}. Got {batched_state.shape[1]}"
 
         # ===== LANGUAGE VALIDATION =====
         # Validate each language stream defined in the modality config
@@ -265,43 +268,43 @@ class Gr00tPolicy(BasePolicy):
             if bs == -1:
                 bs = len(observation["language"][language_key])
             else:
-                assert len(observation["language"][language_key]) == bs, (
-                    f"Language key '{language_key}' must have batch size {bs}. Got {len(observation['language'][language_key])}"
-                )
+                assert (
+                    len(observation["language"][language_key]) == bs
+                ), f"Language key '{language_key}' must have batch size {bs}. Got {len(observation['language'][language_key])}"
 
             # Check that the expected language key exists in the observation
-            assert language_key in observation["language"], (
-                f"Language key '{language_key}' must be in observation"
-            )
+            assert (
+                language_key in observation["language"]
+            ), f"Language key '{language_key}' must be in observation"
 
             batched_language: list[list[str]] = observation["language"][language_key]
 
             # Verify outer structure is a list (batch dimension)
-            assert isinstance(batched_language, list), (
-                f"Language key '{language_key}' must be a list. Got {type(batched_language)}"
-            )
+            assert isinstance(
+                batched_language, list
+            ), f"Language key '{language_key}' must be a list. Got {type(batched_language)}"
 
             # Validate each batch item
             for batch_item in batched_language:
                 # Verify temporal dimension matches expected horizon
-                assert len(batch_item) == len(self.modality_configs["language"].delta_indices), (
-                    f"Language key '{language_key}'s horizon must be {len(self.modality_configs['language'].delta_indices)}. Got {len(batched_language)}"
-                )
+                assert len(batch_item) == len(
+                    self.modality_configs["language"].delta_indices
+                ), f"Language key '{language_key}'s horizon must be {len(self.modality_configs['language'].delta_indices)}. Got {len(batched_language)}"
 
                 # Verify inner structure is also a list (temporal dimension)
-                assert isinstance(batch_item, list), (
-                    f"Language batch item must be a list. Got {type(batch_item)}"
-                )
+                assert isinstance(
+                    batch_item, list
+                ), f"Language batch item must be a list. Got {type(batch_item)}"
 
                 # Current implementation expects exactly one language instruction per timestep
-                assert len(batch_item) == 1, (
-                    f"Language batch item must have exactly one item. Got {len(batch_item)}"
-                )
+                assert (
+                    len(batch_item) == 1
+                ), f"Language batch item must have exactly one item. Got {len(batch_item)}"
 
                 # Verify the instruction itself is a string
-                assert isinstance(batch_item[0], str), (
-                    f"Language batch item must be a string. Got {type(batch_item[0])}"
-                )
+                assert isinstance(
+                    batch_item[0], str
+                ), f"Language batch item must be a string. Got {type(batch_item[0])}"
 
     def _get_action(
         self, observation: dict[str, Any], options: dict[str, Any] | None = None
@@ -317,7 +320,7 @@ class Gr00tPolicy(BasePolicy):
 
         Args:
             observation: Batched observation dictionary
-            options: Optional parameters (currently unused)
+            options: Optional inference parameters
 
         Returns:
             Tuple of (actions_dict, info_dict)
@@ -338,20 +341,30 @@ class Gr00tPolicy(BasePolicy):
         collated_inputs = self.collate_fn(processed_inputs)
         collated_inputs = _rec_to_dtype(collated_inputs, dtype=torch.bfloat16)
 
+        gr00t_rtc_keys = {"rtc_overlap_steps", "rtc_frozen_steps", "rtc_ramp_rate"}
+        provided_gr00t_rtc_keys = gr00t_rtc_keys.intersection(observation)
         # Step 4: Run model inference to predict actions
-        rtc_keys = {"delay_frames", "action_executed_steps"}
-        provided_rtc_keys = rtc_keys.intersection(observation)
-        if provided_rtc_keys and provided_rtc_keys != rtc_keys:
-            missing_rtc_keys = sorted(rtc_keys - provided_rtc_keys)
-            raise ValueError(f"Incomplete RTC inputs; missing keys: {missing_rtc_keys}")
+        pi0_rtc_keys = {"delay_frames", "action_executed_steps"}
+        provided_pi0_rtc_keys = pi0_rtc_keys.intersection(observation)
+        if provided_gr00t_rtc_keys and provided_gr00t_rtc_keys != gr00t_rtc_keys:
+            missing_gr00t_rtc_keys = sorted(gr00t_rtc_keys - provided_gr00t_rtc_keys)
+            raise ValueError(f"Incomplete GR00T RTC inputs; missing keys: {missing_gr00t_rtc_keys}")
+        if provided_pi0_rtc_keys and provided_pi0_rtc_keys != pi0_rtc_keys:
+            missing_pi0_rtc_keys = sorted(pi0_rtc_keys - provided_pi0_rtc_keys)
+            raise ValueError(f"Incomplete RTC inputs; missing keys: {missing_pi0_rtc_keys}")
+        if provided_gr00t_rtc_keys and provided_pi0_rtc_keys:
+            raise ValueError("GR00T RTC and Pi0 RTC inputs cannot be provided together")
 
-        if provided_rtc_keys:
+        if provided_pi0_rtc_keys:
             delay_frames = int(np.asarray(observation["delay_frames"]).item())
             action_executed_steps = int(
                 np.asarray(observation["action_executed_steps"]).item()
             )
+            previous_actions = self.rtc_prev_action
             rtc_beta = float(
-                np.asarray(observation.get("rtc_beta", 5.0)).item()
+                np.asarray(
+                    observation.get("rtc_beta", (options or {}).get("rtc_beta", 5.0))
+                ).item()
             )
 
             if delay_frames < 0 or action_executed_steps < 0:
@@ -365,6 +378,11 @@ class Gr00tPolicy(BasePolicy):
                 action_head.action_horizon,
                 action_head.action_dim,
             )
+            if previous_actions is not None and previous_actions.shape != expected_rtc_shape:
+                raise ValueError(
+                    "RTC previous actions must contain the full normalized model chunk "
+                    f"with shape {expected_rtc_shape}, got {previous_actions.shape}"
+                )
             if not (
                 delay_frames
                 <= action_executed_steps
@@ -375,20 +393,59 @@ class Gr00tPolicy(BasePolicy):
                     f"got d={delay_frames}, s={action_executed_steps}, "
                     f"H={action_head.action_horizon}"
                 )
-            if not np.isfinite(rtc_beta) or rtc_beta < 0:
+            if previous_actions is not None and not torch.isfinite(previous_actions).all():
+                raise ValueError("RTC previous actions must contain only finite values")
+            if not np.isfinite(rtc_beta) or rtc_beta <= 0:
                 raise ValueError(f"rtc_beta must be positive, got {rtc_beta}")
 
             model_pred = self.model.get_action_rtc(
                 **collated_inputs,
+                previous_actions=previous_actions,
                 action_executed_steps=action_executed_steps,
                 delay_frames=delay_frames,
                 beta=rtc_beta,
             )
+        elif provided_gr00t_rtc_keys:
+            rtc_overlap_steps = int(np.asarray(observation["rtc_overlap_steps"]).item())
+            rtc_frozen_steps = int(np.asarray(observation["rtc_frozen_steps"]).item())
+            rtc_ramp_rate = float(np.asarray(observation["rtc_ramp_rate"]).item())
+            action_horizon = self.model.action_head.action_horizon
+            if not 0 <= rtc_frozen_steps <= rtc_overlap_steps <= action_horizon:
+                raise ValueError(
+                    "GR00T RTC requires 0 <= rtc_frozen_steps <= rtc_overlap_steps "
+                    f"<= action_horizon, got frozen={rtc_frozen_steps}, "
+                    f"overlap={rtc_overlap_steps}, H={action_horizon}"
+                )
+            if not np.isfinite(rtc_ramp_rate) or rtc_ramp_rate <= 0:
+                raise ValueError(f"rtc_ramp_rate must be positive, got {rtc_ramp_rate}")
+            previous_actions = self.rtc_prev_action
+            expected_rtc_shape = (
+                len(unbatched_observations),
+                action_horizon,
+                self.model.action_head.action_dim,
+            )
+            if previous_actions is not None and previous_actions.shape != expected_rtc_shape:
+                raise ValueError(
+                    "GR00T RTC previous actions must contain the full normalized model chunk "
+                    f"with shape {expected_rtc_shape}, got {previous_actions.shape}"
+                )
+            if previous_actions is not None and not torch.isfinite(previous_actions).all():
+                raise ValueError("GR00T RTC previous actions must contain only finite values")
+            rtc_options = {
+                "rtc_overlap_steps": rtc_overlap_steps,
+                "rtc_frozen_steps": rtc_frozen_steps,
+                "rtc_ramp_rate": rtc_ramp_rate,
+                "rtc_prev_action": previous_actions,
+            }
+            with torch.inference_mode():
+                model_pred = self.model.get_action(
+                    **collated_inputs,
+                    options=rtc_options,
+                )
         else:
             with torch.inference_mode():
                 model_pred = self.model.get_action(**collated_inputs)
         normalized_action = model_pred["action_pred"].float()
-
         # Step 5: Decode actions from normalized space back to physical units
         batched_states = {}
         for k in self.modality_configs["state"].modality_keys:
@@ -401,7 +458,8 @@ class Gr00tPolicy(BasePolicy):
         casted_action = {
             key: value.astype(np.float32) for key, value in unnormalized_action.items()
         }
-        return casted_action, {}
+        self.rtc_prev_action = normalized_action.detach().clone()
+        return casted_action, normalized_action.cpu().numpy()
 
     def check_action(self, action: dict[str, Any]) -> None:
         """Validate that the action has the correct structure and types.
@@ -460,6 +518,8 @@ class Gr00tPolicy(BasePolicy):
         Returns:
             Dictionary containing the info after resetting the policy
         """
+        self.rtc_prev_action = None
+        self.model.action_head.rtc_prev_actions = None
         return {}
 
 
@@ -623,7 +683,7 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
 
         Args:
             observation: Flat observation dictionary from Gr00t sim environment
-            options: Optional parameters (currently unused)
+            options: Optional inference parameters
 
         Returns:
             Tuple of (flat_actions_dict, info_dict)
@@ -654,6 +714,17 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
                 else:
                     # Video and state arrays are already in correct format (B, T, ...)
                     new_obs[modality][key] = arr
+
+        rtc_keys = {
+            "rtc_overlap_steps",
+            "rtc_frozen_steps",
+            "rtc_ramp_rate",
+            "delay_frames",
+            "action_executed_steps",
+            "rtc_beta",
+        }
+        for key in rtc_keys.intersection(observation):
+            new_obs[key] = observation[key]
 
         # Compute actions using the underlying Gr00tPolicy
         action, info = self.policy.get_action(new_obs, options)

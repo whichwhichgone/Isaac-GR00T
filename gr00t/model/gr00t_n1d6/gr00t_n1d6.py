@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Any, Optional, Tuple
 
 from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
 from gr00t.model.modules.dit import AlternateVLDiT, DiT
@@ -15,7 +15,6 @@ from transformers import AutoConfig, AutoModel, PreTrainedModel
 from transformers.feature_extraction_utils import BatchFeature
 import tree
 import math as th
-from typing import Optional
 
 
 class Gr00tN1d6ActionHead(nn.Module):
@@ -88,7 +87,6 @@ class Gr00tN1d6ActionHead(nn.Module):
         self.set_trainable_parameters(
             config.tune_projector, config.tune_diffusion_model, config.tune_vlln
         )
-        self.rtc_prev_actions = None
 
     def set_trainable_parameters(
         self, tune_projector: bool, tune_diffusion_model: bool, tune_vlln: bool
@@ -288,6 +286,7 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         return BatchFeature(data={"backbone_features": vl_embeds, "state_features": state_features})
 
+
     @torch.no_grad()
     def get_action_with_features(
         self,
@@ -295,6 +294,8 @@ class Gr00tN1d6ActionHead(nn.Module):
         state_features: torch.Tensor,
         embodiment_id: torch.Tensor,
         backbone_output: BatchFeature,
+        action_input: BatchFeature,
+        options: dict[str, Any] | None = None,
     ) -> BatchFeature:
         """
         Generate actions using the flow matching diffusion process.
@@ -317,6 +318,68 @@ class Gr00tN1d6ActionHead(nn.Module):
         )
 
         dt = 1.0 / self.num_inference_timesteps
+        vel_strength = torch.ones_like(actions)
+
+        rtc_keys = {"rtc_overlap_steps", "rtc_frozen_steps", "rtc_ramp_rate"}
+        rtc_option_keys = rtc_keys | {"rtc_prev_action"}
+        provided_rtc_option_keys = rtc_option_keys.intersection(options or {})
+        if provided_rtc_option_keys:
+            # rtc_overlap_steps is the number of steps to overlap with the previous action chunks.
+            # rtc_frozen_steps is the number of steps to freeze the action, which is the latency of the policy inference.
+            # rtc_ramp_rate is the rate of the ramp of denoising the actions.
+            missing_rtc_keys = sorted(rtc_keys - options.keys())
+            if missing_rtc_keys:
+                raise ValueError(f"Missing GR00T RTC options: {missing_rtc_keys}")
+
+            rtc_overlap_steps = int(options["rtc_overlap_steps"])
+            rtc_frozen_steps = int(options["rtc_frozen_steps"])
+            rtc_ramp_rate = float(options["rtc_ramp_rate"])
+            if not 0 <= rtc_frozen_steps <= rtc_overlap_steps <= self.action_horizon:
+                raise ValueError(
+                    "GR00T RTC requires 0 <= rtc_frozen_steps <= rtc_overlap_steps "
+                    f"<= action_horizon, got frozen={rtc_frozen_steps}, "
+                    f"overlap={rtc_overlap_steps}, H={self.action_horizon}"
+                )
+            if not th.isfinite(rtc_ramp_rate) or rtc_ramp_rate <= 0:
+                raise ValueError(f"rtc_ramp_rate must be positive, got {rtc_ramp_rate}")
+
+            if "action" in action_input:
+                previous_actions = torch.as_tensor(
+                    action_input["action"],
+                    device=device,
+                    dtype=actions.dtype,
+                )
+                if previous_actions.shape != actions.shape:
+                    raise ValueError(
+                        f"GR00T RTC previous action shape error: expected {tuple(actions.shape)}, "
+                        f"got {tuple(previous_actions.shape)}"
+                    )
+                if not torch.isfinite(previous_actions).all():
+                    raise ValueError("GR00T RTC previous action must contain only finite values")
+
+                # Use previous action instead of pure noise to do inpainting
+                if rtc_overlap_steps > 0:
+                    actions[:, :rtc_overlap_steps, :] = previous_actions[
+                        :,
+                        -rtc_overlap_steps:,
+                        :,
+                    ]
+                vel_strength[:, :rtc_frozen_steps, :] = 0.0
+                # NOTE: use an exponential ramp strength to set the remaining unfrozen rtc_steps
+                intermediate_steps = rtc_overlap_steps - rtc_frozen_steps
+                # Create exponential ramp from 0 to 1 over intermediate steps
+                t = torch.linspace(0.0, 1.0, intermediate_steps + 2, device=device)
+                ramp = 1 - torch.exp(-rtc_ramp_rate * t)
+                ramp = ramp / ramp[-1].clamp_min(1e-8)  # normalize to [0,1]
+                ramp = ramp[
+                    1:-1
+                ]  # we will only take the middle part of the ramp, ignore the 0.0 and 1.0
+                # Apply ramp to the intermediate steps [batch, intermediate_steps, action_dim]
+                vel_strength[
+                    :,
+                    rtc_frozen_steps:rtc_overlap_steps,
+                    :,
+                ] = ramp[None, :, None].to(device)
 
         # Run denoising steps.
         for t in range(self.num_inference_timesteps):
@@ -357,8 +420,8 @@ class Gr00tN1d6ActionHead(nn.Module):
             pred_velocity = pred[:, -self.action_horizon :]
 
             # Update actions using euler integration.
-            actions = actions + dt * pred_velocity
-        self.rtc_prev_actions = actions.detach().clone()
+            actions = actions + dt * pred_velocity * vel_strength
+
         return BatchFeature(
             data={
                 "action_pred": actions,
@@ -447,7 +510,7 @@ class Gr00tN1d6ActionHead(nn.Module):
         Compute min(beta, (1 - tau) / (tau * r_tau^2)).
         At tau=0, use beta because the raw value is singular and then clipped.
         """
-        if beta <= 0:
+        if not th.isfinite(beta) or beta <= 0:
             raise ValueError(f"beta must be positive, got {beta}")
         if tau <= 0.0:
             return torch.tensor(beta, device=device, dtype=dtype)
@@ -460,15 +523,17 @@ class Gr00tN1d6ActionHead(nn.Module):
         raw = (one - tau_t) / (tau_t * r2 + eps)
         return torch.clamp(raw, max=beta)
 
+    @torch.inference_mode(False)
     def get_action_with_features_rtc(
         self,
         backbone_features: torch.Tensor,
         state_features: torch.Tensor,
         embodiment_id: torch.Tensor,
         backbone_output: BatchFeature,
+        rtc_prev_actions: Optional[torch.Tensor] = None,
         rtc_executed_steps: Optional[int] = None,
         rtc_delay_steps: Optional[int] = None,
-        rtc_beta: float = 1.0,
+        rtc_beta: float = 5.0,
     ) -> BatchFeature:
         """
         Generate actions using flow matching with optional RTC guidance.
@@ -525,27 +590,18 @@ class Gr00tN1d6ActionHead(nn.Module):
                 "RTC requires rtc_executed_steps, and rtc_delay_steps "
                 "to be provided together."
             )
-        use_rtc = provided_rtc_inputs == len(rtc_inputs)
+        if rtc_prev_actions is not None and provided_rtc_inputs != len(rtc_inputs):
+            raise ValueError(
+                "RTC requires rtc_executed_steps and rtc_delay_steps when "
+                "rtc_prev_actions is provided."
+            )
 
-        if use_rtc:
+        if provided_rtc_inputs == len(rtc_inputs):
             s = int(rtc_executed_steps)
             d = int(rtc_delay_steps)
-
-            self.rtc_prev_actions = torch.as_tensor(
-                self.rtc_prev_actions,
-                device=device,
-                dtype=dtype,
-            ).detach()
-            if self.rtc_prev_actions.shape != (batch_size, H, self.action_dim):
-                raise ValueError(
-                    f"self.rtc_prev_actions shape error: expected "
-                    f"{(batch_size, H, self.action_dim)}, got {self.rtc_prev_actions.shape}"
-                )
-
-            # Align the old chunk to the new inference start time as defined by RTC:
-            # A_prev[i] = A_old[s + i], right-padded with zeros outside the overlap.
-            A_prev = self._rtc_align_previous_actions(self.rtc_prev_actions, s)
-
+            rtc_beta = float(rtc_beta)
+            if not th.isfinite(rtc_beta) or rtc_beta <= 0:
+                raise ValueError(f"rtc_beta must be positive, got {rtc_beta}")
             W = self._rtc_softmask(
                 H=H,
                 d=d,
@@ -554,8 +610,31 @@ class Gr00tN1d6ActionHead(nn.Module):
                 dtype=dtype,
             )
         else:
-            A_prev = None
+            s = None
             W = None
+
+        use_rtc = W is not None and rtc_prev_actions is not None
+
+        if use_rtc:
+
+            rtc_prev_actions = torch.as_tensor(
+                rtc_prev_actions,
+                device=device,
+                dtype=dtype,
+            ).detach()
+            if rtc_prev_actions.shape != (batch_size, H, self.action_dim):
+                raise ValueError(
+                    f"rtc_prev_actions shape error: expected "
+                    f"{(batch_size, H, self.action_dim)}, got {rtc_prev_actions.shape}"
+                )
+            if not torch.isfinite(rtc_prev_actions).all():
+                raise ValueError("rtc_prev_actions must contain only finite values")
+
+            # Align the old chunk to the new inference start time as defined by RTC:
+            # A_prev[i] = A_old[s + i], right-padded with zeros outside the overlap.
+            A_prev = self._rtc_align_previous_actions(rtc_prev_actions, s)
+        else:
+            A_prev = None
 
         for t in range(self.num_inference_timesteps):
             t_cont = t / float(self.num_inference_timesteps)
@@ -655,7 +734,6 @@ class Gr00tN1d6ActionHead(nn.Module):
                     actions = actions.detach()
                     pred_velocity = forward_velocity(actions)
                     actions = actions + dt * pred_velocity
-
         return BatchFeature(
             data={
                 "action_pred": actions.detach(),
@@ -665,7 +743,12 @@ class Gr00tN1d6ActionHead(nn.Module):
         )
 
     @torch.no_grad()
-    def get_action(self, backbone_output: BatchFeature, action_input: BatchFeature) -> BatchFeature:
+    def get_action(
+        self,
+        backbone_output: BatchFeature,
+        action_input: BatchFeature,
+        options: dict[str, Any] | None = None,
+    ) -> BatchFeature:
         """
         Generate actions using the flow matching diffusion process.
 
@@ -687,12 +770,17 @@ class Gr00tN1d6ActionHead(nn.Module):
             state_features=features.state_features,
             embodiment_id=action_input.embodiment_id,
             backbone_output=backbone_output,
+            action_input=action_input,
+            options=options,
         )
+    
 
+    @torch.inference_mode(False)
     def get_action_rtc(
         self,
         backbone_output: BatchFeature,
         action_input: BatchFeature,
+        previous_actions,
         action_executed_steps,
         delay_frames,
         beta=5.0,
@@ -719,6 +807,7 @@ class Gr00tN1d6ActionHead(nn.Module):
             state_features=features.state_features,
             embodiment_id=action_input.embodiment_id,
             backbone_output=backbone_output,
+            rtc_prev_actions=previous_actions,
             rtc_executed_steps=action_executed_steps,
             rtc_delay_steps=delay_frames,
             rtc_beta=beta,
@@ -848,22 +937,29 @@ class Gr00tN1d6(PreTrainedModel):
 
         return action_outputs
 
-    def get_action(self, inputs: dict) -> BatchFeature:
+    def get_action(self, inputs: dict, options: dict[str, Any] | None = None) -> BatchFeature:
         """
         Generate actions using the complete model.
         """
         # Prepare inputs for backbone and action head
         backbone_inputs, action_inputs = self.prepare_input(inputs)
-
+        if options is not None and options.get("rtc_prev_action") is not None:
+            action_inputs["action"] = options["rtc_prev_action"]
         # Forward through backbone
         backbone_outputs = self.backbone(backbone_inputs)
-        action_outputs = self.action_head.get_action(backbone_outputs, action_inputs)
+        action_outputs = self.action_head.get_action(
+            backbone_outputs,
+            action_inputs,
+            options=options,
+        )
 
         return action_outputs
 
+    @torch.inference_mode(False)
     def get_action_rtc(
         self,
         inputs: dict,
+        previous_actions,
         action_executed_steps,
         delay_frames,
         beta=5.0,
@@ -880,6 +976,7 @@ class Gr00tN1d6(PreTrainedModel):
         action_outputs = self.action_head.get_action_rtc(
             backbone_output=backbone_outputs,
             action_input=action_inputs,
+            previous_actions=previous_actions,
             action_executed_steps=action_executed_steps,
             delay_frames=delay_frames,
             beta=beta,

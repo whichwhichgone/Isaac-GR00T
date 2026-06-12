@@ -16,7 +16,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 SOURCE_JSON_NAME = "data_root_relative_6D.json"
 OUTPUT_JSON_NAME = "data_root_relative_6D_window_cont.json"
 
-BODY_KEYS = ("imu", "body_joint", "mocap")
+BODY_KEYS = ("imu", "body_joint", "mocap", "hand_cmd", "hand_state")
 SELECT_11_INDICES = [
     0,  # pelvis/root,       original 29 index: root/floating base
     2,  # left_knee_link,    original 29 index: 3
@@ -49,7 +49,7 @@ def _load_frame_images(
             dtype=np.uint8,
         )
 
-    return _load("front"), _load("left"), _load("right")
+    return _load("front_head"), _load("left_hand"), _load("right_hand")
 
 
 def _collect_episodes(input_dirs: list[Path]) -> list[Path]:
@@ -72,13 +72,15 @@ def _states_to_vector(states: list[dict[str, Any]]) -> np.ndarray:
     for state in states:
         imu = np.asarray(state["imu"], dtype=np.float64).reshape(-1)
         body_joint = np.asarray(state["body_joint"], dtype=np.float64).reshape(-1)
-        vectors.append(np.concatenate([imu, body_joint], axis=0))
+        hand_state = np.asarray(state["hand_state"], dtype=np.float64).reshape(-1)
+        vectors.append(np.concatenate([imu, body_joint, hand_state], axis=0))
     return np.concatenate(vectors, axis=0)
 
 
 def _action_to_vector(actions: list[dict[str, Any]]) -> np.ndarray:
     vectors = []
     for action in actions:
+        hand_cmd = np.asarray(action["hand_cmd"], dtype=np.float64)
         mocap = np.asarray(action["mocap"], dtype=np.float64)
         mocap_velocity = mocap[:3]
         mocap_relative = mocap[3:].reshape(-1, 9)
@@ -86,7 +88,7 @@ def _action_to_vector(actions: list[dict[str, Any]]) -> np.ndarray:
         mocap_rel_xyz = mocap_relative[:, :3].flatten()
         mocap_rel_rot = mocap_relative[:, 3:].flatten()
         mocap_rel_final = np.concatenate([mocap_velocity, mocap_rel_xyz, mocap_rel_rot], axis=0)
-        vectors.append(mocap_rel_final)
+        vectors.append(np.concatenate([mocap_rel_final, hand_cmd], axis=0))
     return np.concatenate(vectors, axis=0)
 
 
@@ -98,19 +100,25 @@ def split_front_and_body(
     seen_front: set[str] = set()
 
     for frame_idx, frame in enumerate(frames):
-        if "front" not in frame:
-            raise ValueError(f"Frame {frame_idx} is missing the 'front' key")
+        if "front_head" not in frame:
+            raise ValueError(f"Frame {frame_idx} is missing the 'front_head' key")
+        if "left_hand" not in frame:
+            raise ValueError(f"Frame {frame_idx} is missing the 'left_hand' key")
+        if "right_hand" not in frame:
+            raise ValueError(f"Frame {frame_idx} is missing the 'right_hand' key")
         if "task" not in frame:
             raise ValueError(f"Frame {frame_idx} is missing the 'task' key")
         for key in BODY_KEYS:
             if key not in frame:
                 raise ValueError(f"Frame {frame_idx} is missing the '{key}' key")
 
-        front = frame["front"]
+        front_head = frame["front_head"]
+        left_hand = frame["left_hand"]
+        right_hand = frame["right_hand"]
         task = frame["task"]
-        if front not in seen_front:
-            seen_front.add(front)
-            list_front.append({"front": front, "task": task})
+        if front_head not in seen_front:
+            seen_front.add(front_head)
+            list_front.append({"front_head": front_head, "left_hand": left_hand, "right_hand": right_hand, "task": task, "body_index": frame_idx})
 
         list_body.append({key: frame[key] for key in BODY_KEYS})
 
@@ -124,11 +132,10 @@ def build_windowed_frames(
     front_fps: int,
     interval_num: int,
 ) -> list[dict[str, Any]]:
-    stride = body_fps / front_fps
     new_list: list[dict[str, Any]] = []
 
     for t, front_frame in enumerate(list_front):
-        center = round(t * stride)
+        center = int(front_frame["body_index"])
         left = center - interval_num
         right = center + interval_num
 
@@ -151,7 +158,9 @@ def build_windowed_frames(
         action = _action_to_vector(action)
         new_list.append(
             {
-                "front": front_frame["front"],
+                "front_head": front_frame["front_head"],
+                "left_hand": front_frame["left_hand"],
+                "right_hand": front_frame["right_hand"],
                 "states": states,
                 "action": action,
                 "task": front_frame["task"],
@@ -257,25 +266,13 @@ def convert(args: "DataSetArgs") -> None:
 class DataSetArgs:
     input_dirs: list[Path] = field(
         default_factory=lambda: [
-            Path("/liujinxin/dataset/piper/G1/0518_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0518_clean_desk_place_sofa_g1_fast"),
-            Path("/liujinxin/dataset/piper/G1/0519_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0520_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0521_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0525_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0526_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0527_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0528_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0529_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0601_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0602_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0603_clean_desk_place_sofa_g1_B"),
-            Path("/liujinxin/dataset/piper/G1/0604_clean_desk_place_sofa_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0609_pick_water_bowl_sink_g1_B"),
+            Path("/liujinxin/dataset/piper/G1/0610_pick_water_bowl_sink_g1_B"),
         ]
     )
     """One or more directories, each containing episode_* subfolders."""
 
-    output_dir: Path = Path("/liujinxin/liyifan/Isaac-GR00T/dataset/G1_real_6D_window_cont_rel_0518-0604")
+    output_dir: Path = Path("/liujinxin/liyifan/Isaac-GR00T/dataset/G1_hand_window_pick_water_bowl_sink_0609-0610")
     """Output directory for the LeRobot v2 dataset."""
 
     fps: int = 20
@@ -284,10 +281,10 @@ class DataSetArgs:
     body_fps: int = 50
     """Frame rate of body_joint / imu / mocap in data_root_relative_6D.json."""
 
-    repo_id: str = "lerobot_datasets/G1_real_6D_window_cont_rel_0518-0604"
+    repo_id: str = "lerobot_datasets/g1_real_6d_window_cont_rel"
     """LeRobot repo ID written into meta/info.json."""
 
-    robot_type: str = "unitree_g1_29dof"
+    robot_type: str = "unitree_g1_29dof_hand"
     """Robot type tag written into meta/info.json."""
 
     image_writer_threads: int = 8
@@ -325,12 +322,12 @@ class DataSetArgs:
         self.features = {
             "observation.state": {
                 "dtype": "float64",
-                "shape": ((self.interval_num + 1) * (6 + 29),),
+                "shape": ((self.interval_num + 1) * (6 + 29 + 12),),
                 "names": None,
             },
             "action": {
                 "dtype": "float64",
-                "shape": ((self.interval_num + 1) * (3 + 11 * 9),),
+                "shape": ((self.interval_num + 1) * (3 + 11 * 9 + 12),),
                 "names": None,
             },
             "task_vis_stickman": {

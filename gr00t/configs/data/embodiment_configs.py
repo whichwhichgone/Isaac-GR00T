@@ -373,6 +373,36 @@ MODALITY_CONFIGS = {
             modality_keys=["annotation.human.task_description"],
         ),
     },
+    "unitree_g1_29dof_hand": {    
+        "video": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=["ego_view"],
+        ),
+        "state": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=[
+                "imu_joints",
+            ],
+        ),
+        "action": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=[
+                "mocap",
+            ],
+            action_configs=[
+                # base_rotation
+                ActionConfig(
+                    rep=ActionRepresentation.ABSOLUTE,
+                    type=ActionType.NON_EEF,
+                    format=ActionFormat.DEFAULT,
+                ),
+            ],
+        ),
+        "language": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=["annotation.human.task_description"],
+        ),
+    },
     "unitree_g1_15x7_mocap":{    
         "video": ModalityConfig(
                 delta_indices=[0],
