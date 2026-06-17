@@ -5,6 +5,7 @@ This module provides the core policy classes for running Gr00t models:
 - Gr00tSimPolicyWrapper: Wrapper for compatibility with existing Gr00t simulation environments
 """
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,23 @@ def _rec_to_dtype(x: Any, dtype: torch.dtype) -> Any:
         return [_rec_to_dtype(v, dtype) for v in x]
     else:
         return x
+
+
+def _synchronize_cuda_if_needed(model: torch.nn.Module) -> None:
+    """Synchronize CUDA work so timing captures async GPU execution."""
+    if not torch.cuda.is_available():
+        return
+
+    device = getattr(model, "device", None)
+    if device is None:
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            return
+
+    device = torch.device(device)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
 
 
 class Gr00tPolicy(BasePolicy):
@@ -325,6 +343,8 @@ class Gr00tPolicy(BasePolicy):
         Returns:
             Tuple of (actions_dict, info_dict)
         """
+        total_start = time.perf_counter()
+
         # Step 1: Split batched observation into individual observations
         unbatched_observations = self._unbatch_observation(observation)
         processed_inputs = []
@@ -398,6 +418,9 @@ class Gr00tPolicy(BasePolicy):
             if not np.isfinite(rtc_beta) or rtc_beta <= 0:
                 raise ValueError(f"rtc_beta must be positive, got {rtc_beta}")
 
+            preprocess_ms = (time.perf_counter() - total_start) * 1000.0
+            _synchronize_cuda_if_needed(self.model)
+            model_inference_start = time.perf_counter()
             model_pred = self.model.get_action_rtc(
                 **collated_inputs,
                 previous_actions=previous_actions,
@@ -405,6 +428,8 @@ class Gr00tPolicy(BasePolicy):
                 delay_frames=delay_frames,
                 beta=rtc_beta,
             )
+            _synchronize_cuda_if_needed(self.model)
+            model_inference_ms = (time.perf_counter() - model_inference_start) * 1000.0
         elif provided_gr00t_rtc_keys:
             rtc_overlap_steps = int(np.asarray(observation["rtc_overlap_steps"]).item())
             rtc_frozen_steps = int(np.asarray(observation["rtc_frozen_steps"]).item())
@@ -437,14 +462,26 @@ class Gr00tPolicy(BasePolicy):
                 "rtc_ramp_rate": rtc_ramp_rate,
                 "rtc_prev_action": previous_actions,
             }
+            preprocess_ms = (time.perf_counter() - total_start) * 1000.0
+            _synchronize_cuda_if_needed(self.model)
+            model_inference_start = time.perf_counter()
             with torch.inference_mode():
                 model_pred = self.model.get_action(
                     **collated_inputs,
                     options=rtc_options,
                 )
+            _synchronize_cuda_if_needed(self.model)
+            model_inference_ms = (time.perf_counter() - model_inference_start) * 1000.0
         else:
+            preprocess_ms = (time.perf_counter() - total_start) * 1000.0
+            _synchronize_cuda_if_needed(self.model)
+            model_inference_start = time.perf_counter()
             with torch.inference_mode():
                 model_pred = self.model.get_action(**collated_inputs)
+            _synchronize_cuda_if_needed(self.model)
+            model_inference_ms = (time.perf_counter() - model_inference_start) * 1000.0
+
+        postprocess_start = time.perf_counter()
         normalized_action = model_pred["action_pred"].float()
         # Step 5: Decode actions from normalized space back to physical units
         batched_states = {}
@@ -459,7 +496,24 @@ class Gr00tPolicy(BasePolicy):
             key: value.astype(np.float32) for key, value in unnormalized_action.items()
         }
         self.rtc_prev_action = normalized_action.detach().clone()
-        return casted_action, normalized_action.cpu().numpy()
+        postprocess_ms = (time.perf_counter() - postprocess_start) * 1000.0
+
+        timing = {
+            "preprocess_ms": preprocess_ms,
+            "model_inference_ms": model_inference_ms,
+            "postprocess_ms": postprocess_ms,
+            "total_ms": (time.perf_counter() - total_start) * 1000.0,
+        }
+        print(
+            "[Gr00tPolicy] inference timing: "
+            f"preprocess={timing['preprocess_ms']:.2f} ms, "
+            f"model={timing['model_inference_ms']:.2f} ms, "
+            f"postprocess={timing['postprocess_ms']:.2f} ms, "
+            f"total={timing['total_ms']:.2f} ms",
+            flush=True,
+        )
+        info = {"timing": timing}
+        return casted_action, info
 
     def check_action(self, action: dict[str, Any]) -> None:
         """Validate that the action has the correct structure and types.
