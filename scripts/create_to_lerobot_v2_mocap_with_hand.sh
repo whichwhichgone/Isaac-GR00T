@@ -10,8 +10,8 @@ else
     echo "ffmpeg already installed: $(which ffmpeg)"
     ffmpeg -version | head -n 1
 fi
-DATE="2026-06-17"
-REPO_NAME="G1_hand_window_pick_water_bowl_sink_0609-0610"
+DATE="2026-06-19"
+REPO_NAME="pick_cube_bottle_g1_0616-0617"
 DATASET_PATH="/liujinxin/liyifan/Isaac-GR00T/dataset/${REPO_NAME}"
 EMBODIMENT_TAG="UNITREE_G1_29DOF_HAND"
 MODALITY_NAME="modality_window_with_hand"
@@ -31,7 +31,7 @@ echo "GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE}"
 cd /liujinxin/liyifan/Isaac-GR00T
 # source /liujinxin/conda3/bin/activate dreamzero
 
-# python scripts/convert_to_lerobot_new.py \
+# python scripts/convert_to_lerobot_new_with_hand.py \
 #     --output_dir "${DATASET_PATH}"
 
 # cp "/liujinxin/liyifan/Isaac-GR00T/scripts/${MODALITY_NAME}.json" "${DATASET_PATH}/meta/modality.json"
@@ -52,7 +52,7 @@ torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29500 \
     --dataset-path "${DATASET_PATH}" \
     --embodiment_tag "${EMBODIMENT_TAG}" \
     --num_gpus "${NUM_GPUS}" \
-    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_1s" \
+    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_single_view" \
     --save_total_limit 5 \
     --save-steps 5000 \
     --max-steps 50000 \

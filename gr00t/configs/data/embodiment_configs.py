@@ -375,7 +375,7 @@ MODALITY_CONFIGS = {
     },
     "unitree_g1_29dof_hand": {    
         "video": ModalityConfig(
-            delta_indices=[-20,-10,0],
+            delta_indices=[0],
             modality_keys=[
                 "ego_view"
             ],
@@ -405,7 +405,7 @@ MODALITY_CONFIGS = {
             modality_keys=["annotation.human.task_description"],
         ),
     },
-    "unitree_g1_29dof_hand_2s": {    
+    "unitree_g1_29dof_hand_1s": {    
         "video": ModalityConfig(
             delta_indices=[0],
             modality_keys=["ego_view"],
