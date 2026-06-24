@@ -19,11 +19,35 @@ class FinetuneConfig:
     base_model_path: str
     """Path to the pretrained base model checkpoint (e.g., Hugging Face model hub or local directory)."""
 
-    dataset_path: str
-    """Path to the dataset root directory containing trajectory data for fine-tuning."""
+    embodiment_tag: EmbodimentTag | None = None
+    """
+    Identifier specifying which embodiment (robot configuration) this fine-tuning run targets.
+    For multi-dataset finetuning, this is used as the default embodiment tag when
+    dataset_embodiment_tags is not provided.
+    """
 
-    embodiment_tag: EmbodimentTag
-    """Identifier specifying which embodiment (robot configuration) this fine-tuning run targets."""
+    dataset_path: str | None = None
+    """Path to one dataset root directory. Kept for the original single-dataset fine-tuning flow."""
+
+    dataset_paths: list[str] | None = None
+    """
+    Paths to multiple LeRobot dataset root directories.
+    If provided, this takes precedence over dataset_path.
+    """
+
+    dataset_mix_ratios: list[float] | None = None
+    """
+    Optional per-dataset sampling ratios for dataset_paths.
+    If omitted, all datasets use ratio 1.0.
+    Must have the same length as dataset_paths when provided.
+    """
+
+    dataset_embodiment_tags: list[EmbodimentTag] | None = None
+    """
+    Optional per-dataset embodiment tags for dataset_paths.
+    If omitted, all datasets use embodiment_tag.
+    Must have the same length as dataset_paths when provided.
+    """
 
     init_model_from: str | None = None
     """If set, load model weights from this path (e.g. a previous training checkpoint-XXXX dir)
