@@ -345,7 +345,7 @@ MODALITY_CONFIGS = {
     },
     "unitree_g1_29dof": {    
         "video": ModalityConfig(
-            delta_indices=[-20,-10,0],
+            delta_indices=[0],
             modality_keys=["ego_view"],
         ),
         "state": ModalityConfig(

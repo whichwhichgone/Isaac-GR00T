@@ -62,6 +62,9 @@ class Gr00tN1d6ActionHead(nn.Module):
             hidden_dim=self.hidden_size,
             output_dim=self.action_dim,
         )
+        self.schedule_encoder = nn.Linear(1, self.input_embedding_dim)
+        nn.init.zeros_(self.schedule_encoder.weight)
+        nn.init.zeros_(self.schedule_encoder.bias)
 
         self.vlln = (
             nn.LayerNorm(config.backbone_embedding_dim) if config.use_vlln else nn.Identity()
@@ -196,18 +199,65 @@ class Gr00tN1d6ActionHead(nn.Module):
             noise = torch.randn_like(state_features) * self.state_additive_noise_scale
             state_features = state_features + noise
 
-        # Embed noised action trajectory.
+        
         actions = action_input.action
+        # build rtc softmask
+        H = actions.shape[1]
+
+
+        d = torch.randint(
+            4,
+            min(12, H // 2) + 1,
+            (1,),
+            device=actions.device,
+        ).item()
+
+        s_center = 35
+        s_jitter = 7
+
+        s_low = max(d, s_center - s_jitter)
+        s_high = min(H - d, s_center + s_jitter)
+
+        s = torch.randint(
+            s_low,
+            s_high + 1,
+            (1,),
+            device=actions.device,
+        ).item()
+        overlap_end = H - s
+        w = torch.zeros(H, device=actions.device, dtype=actions.dtype)
+        w[:d] = 1.0
+        intermediate_steps = overlap_end - d
+        if intermediate_steps > 0:
+            tt = torch.linspace(
+                0.0,
+                1.0,
+                intermediate_steps + 2,
+                device=actions.device,
+                dtype=actions.dtype,
+            )
+            vel_ramp = 1 - torch.exp(-tt)
+            vel_ramp = vel_ramp / vel_ramp[-1].clamp_min(1e-8)
+            vel_ramp = vel_ramp[1:-1]
+            w[d:overlap_end] = 1.0 - vel_ramp
+        w = w.view(1, H, 1)
+
+        # Embed noised action trajectory.
         noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype)
         t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
         t = t[:, None, None]  # shape (B,1,1) for broadcast
 
+        dt = 1.0 / float(self.config.num_inference_timesteps)
+        kappa = w / dt
         noisy_trajectory = (1 - t) * noise + t * actions
-        velocity = actions - noise
+        velocity = (actions - noise) * (1.0 + kappa * (1 - t))
+        noisy_trajectory_guidance = w * actions + (1 - w) * noisy_trajectory
+        schedule_features = self.schedule_encoder(w)
 
         # Convert (continuous) t -> discrete if needed
         t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
-        action_features = self.action_encoder(noisy_trajectory, t_discretized, embodiment_id)
+        action_features = self.action_encoder(noisy_trajectory_guidance, t_discretized, embodiment_id)
+        action_features = action_features + schedule_features
 
         # Maybe add position embedding.
         if self.config.add_pos_embed:
@@ -318,7 +368,12 @@ class Gr00tN1d6ActionHead(nn.Module):
         )
 
         dt = 1.0 / self.num_inference_timesteps
-        vel_strength = torch.ones_like(actions)
+        w = torch.zeros(
+            size=(1, self.config.action_horizon, 1),
+            dtype=actions.dtype,
+            device=device,
+        )
+        prev_action_condition = None
 
         rtc_keys = {"rtc_overlap_steps", "rtc_frozen_steps", "rtc_ramp_rate"}
         rtc_option_keys = rtc_keys | {"rtc_prev_action"}
@@ -343,9 +398,13 @@ class Gr00tN1d6ActionHead(nn.Module):
             if not th.isfinite(rtc_ramp_rate) or rtc_ramp_rate <= 0:
                 raise ValueError(f"rtc_ramp_rate must be positive, got {rtc_ramp_rate}")
 
-            if "action" in action_input:
+            previous_actions = options.get("rtc_prev_action")
+            if previous_actions is None and "action" in action_input:
+                previous_actions = action_input["action"]
+
+            if previous_actions is not None:
                 previous_actions = torch.as_tensor(
-                    action_input["action"],
+                    previous_actions,
                     device=device,
                     dtype=actions.dtype,
                 )
@@ -357,40 +416,52 @@ class Gr00tN1d6ActionHead(nn.Module):
                 if not torch.isfinite(previous_actions).all():
                     raise ValueError("GR00T RTC previous action must contain only finite values")
 
-                # Use previous action instead of pure noise to do inpainting
                 if rtc_overlap_steps > 0:
-                    actions[:, :rtc_overlap_steps, :] = previous_actions[
+                    prev_action_condition = torch.zeros_like(actions)
+                    prev_action_condition[:, :rtc_overlap_steps, :] = previous_actions[
                         :,
                         -rtc_overlap_steps:,
                         :,
                     ]
-                vel_strength[:, :rtc_frozen_steps, :] = 0.0
+
+                w = torch.zeros(
+                    size=(self.config.action_horizon,),
+                    dtype=actions.dtype,
+                    device=device,
+                )
+                w[:rtc_frozen_steps] = 1.0
                 # NOTE: use an exponential ramp strength to set the remaining unfrozen rtc_steps
                 intermediate_steps = rtc_overlap_steps - rtc_frozen_steps
-                # Create exponential ramp from 0 to 1 over intermediate steps
-                t = torch.linspace(0.0, 1.0, intermediate_steps + 2, device=device)
-                ramp = 1 - torch.exp(-rtc_ramp_rate * t)
-                ramp = ramp / ramp[-1].clamp_min(1e-8)  # normalize to [0,1]
-                ramp = ramp[
-                    1:-1
-                ]  # we will only take the middle part of the ramp, ignore the 0.0 and 1.0
-                # Apply ramp to the intermediate steps [batch, intermediate_steps, action_dim]
-                vel_strength[
-                    :,
-                    rtc_frozen_steps:rtc_overlap_steps,
-                    :,
-                ] = ramp[None, :, None].to(device)
+                if intermediate_steps > 0:
+                    # Create exponential ramp from 0 to 1 over intermediate steps
+                    t = torch.linspace(
+                        0.0,
+                        1.0,
+                        intermediate_steps + 2,
+                        device=device,
+                        dtype=actions.dtype,
+                    )
+                    vel_ramp = 1 - torch.exp(-rtc_ramp_rate * t)
+                    vel_ramp = vel_ramp / vel_ramp[-1].clamp_min(1e-8)
+                    vel_ramp = vel_ramp[1:-1]
+                    w[rtc_frozen_steps:rtc_overlap_steps] = 1.0 - vel_ramp
+                w = w.view(1, self.config.action_horizon, 1)
 
         # Run denoising steps.
         for t in range(self.num_inference_timesteps):
             t_cont = t / float(self.num_inference_timesteps)  # e.g. goes 0, 1/N, 2/N, ...
             t_discretized = int(t_cont * self.num_timestep_buckets)
+            if prev_action_condition is not None:
+                guided_actions = w * prev_action_condition + (1 - w) * actions
+            else:
+                guided_actions = actions
 
             # Embed noised action trajectory.
             timesteps_tensor = torch.full(
                 size=(batch_size,), fill_value=t_discretized, device=device
             )
-            action_features = self.action_encoder(actions, timesteps_tensor, embodiment_id)
+            action_features = self.action_encoder(guided_actions, timesteps_tensor, embodiment_id)
+            action_features = action_features + self.schedule_encoder(w)
             # Add position embedding.
             if self.config.add_pos_embed:
                 pos_ids = torch.arange(action_features.shape[1], dtype=torch.long, device=device)
@@ -420,7 +491,7 @@ class Gr00tN1d6ActionHead(nn.Module):
             pred_velocity = pred[:, -self.action_horizon :]
 
             # Update actions using euler integration.
-            actions = actions + dt * pred_velocity * vel_strength
+            actions = guided_actions + dt * pred_velocity
 
         return BatchFeature(
             data={

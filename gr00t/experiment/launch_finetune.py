@@ -26,13 +26,74 @@ def load_modality_config(modality_config_path: str):
         raise FileNotFoundError(f"Modality config path does not exist: {modality_config_path}")
 
 
+def build_dataset_configs(ft_config: FinetuneConfig) -> list[dict]:
+    """Build data.datasets config for single-dataset or multi-dataset finetuning."""
+    if ft_config.dataset_paths is not None:
+        if len(ft_config.dataset_paths) == 0:
+            raise ValueError("--dataset-paths must contain at least one dataset path")
+
+        if ft_config.dataset_mix_ratios is None:
+            mix_ratios = [1.0] * len(ft_config.dataset_paths)
+        else:
+            mix_ratios = ft_config.dataset_mix_ratios
+            if len(mix_ratios) != len(ft_config.dataset_paths):
+                raise ValueError(
+                    "--dataset-mix-ratios must have the same length as --dataset-paths "
+                    f"({len(mix_ratios)} != {len(ft_config.dataset_paths)})"
+                )
+
+        if ft_config.dataset_embodiment_tags is None:
+            if ft_config.embodiment_tag is None:
+                raise ValueError(
+                    "Either --embodiment-tag or --dataset-embodiment-tags must be provided"
+                )
+            embodiment_tags = [ft_config.embodiment_tag.value] * len(ft_config.dataset_paths)
+        else:
+            embodiment_tags = [tag.value for tag in ft_config.dataset_embodiment_tags]
+            if len(embodiment_tags) != len(ft_config.dataset_paths):
+                raise ValueError(
+                    "--dataset-embodiment-tags must have the same length as --dataset-paths "
+                    f"({len(embodiment_tags)} != {len(ft_config.dataset_paths)})"
+                )
+
+        return [
+            {
+                "dataset_paths": [dataset_path],
+                "mix_ratio": mix_ratio,
+                "embodiment_tag": dataset_embodiment_tag,
+            }
+            for dataset_path, mix_ratio, dataset_embodiment_tag in zip(
+                ft_config.dataset_paths, mix_ratios, embodiment_tags
+            )
+        ]
+
+    if ft_config.dataset_path is None:
+        raise ValueError("Either --dataset-path or --dataset-paths must be provided")
+
+    if ft_config.dataset_mix_ratios is not None:
+        raise ValueError("--dataset-mix-ratios can only be used with --dataset-paths")
+
+    if ft_config.dataset_embodiment_tags is not None:
+        raise ValueError("--dataset-embodiment-tags can only be used with --dataset-paths")
+
+    if ft_config.embodiment_tag is None:
+        raise ValueError("--embodiment-tag must be provided when using --dataset-path")
+
+    return [
+        {
+            "dataset_paths": [ft_config.dataset_path],
+            "mix_ratio": 1.0,
+            "embodiment_tag": ft_config.embodiment_tag.value,
+        }
+    ]
+
+
 if __name__ == "__main__":
     # Set LOGURU_LEVEL environment variable if not already set (default: INFO)
     if "LOGURU_LEVEL" not in os.environ:
         os.environ["LOGURU_LEVEL"] = "INFO"
     # Use tyro for clean CLI
     ft_config = tyro.cli(FinetuneConfig, description=__doc__)
-    embodiment_tag = ft_config.embodiment_tag.value
 
     # all rank workers should register for the modality config
     if ft_config.modality_config_path is not None:
@@ -42,13 +103,7 @@ if __name__ == "__main__":
         {
             "data": {
                 "download_cache": False,
-                "datasets": [
-                    {
-                        "dataset_paths": [ft_config.dataset_path],
-                        "mix_ratio": 1.0,
-                        "embodiment_tag": embodiment_tag,
-                    }
-                ],
+                "datasets": build_dataset_configs(ft_config),
             }
         }
     )

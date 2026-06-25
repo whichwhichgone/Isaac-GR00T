@@ -98,6 +98,28 @@ class Gr00tN1d6Pipeline(ModelPipeline):
                     )
                 logging.info("mask_token not in checkpoint - initialized")
 
+            schedule_encoder_missing = any("schedule_encoder" in key for key in missing_keys)
+            if hasattr(model.action_head, "schedule_encoder"):
+                schedule_encoder = model.action_head.schedule_encoder
+                schedule_encoder_invalid = (
+                    not torch.isfinite(schedule_encoder.weight).all().item()
+                    or schedule_encoder.weight.detach().abs().max().item() > 1e3
+                    or (
+                        schedule_encoder.bias is not None
+                        and (
+                            not torch.isfinite(schedule_encoder.bias).all().item()
+                            or schedule_encoder.bias.detach().abs().max().item() > 1e3
+                        )
+                    )
+                )
+
+                if schedule_encoder_missing or schedule_encoder_invalid:
+                    with torch.no_grad():
+                        schedule_encoder.weight.normal_(mean=0.0, std=0.02)
+                        if schedule_encoder.bias is not None:
+                            schedule_encoder.bias.zero_()
+                    logging.info("schedule_encoder missing or invalid - safely initialized after checkpoint load")
+
         else:
             model = self.model_class(
                 self.config.model, transformers_loading_kwargs=self.transformers_loading_kwargs
