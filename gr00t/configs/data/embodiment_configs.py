@@ -346,7 +346,11 @@ MODALITY_CONFIGS = {
     "unitree_g1_29dof": {    
         "video": ModalityConfig(
             delta_indices=[-20,-10,0],
-            modality_keys=["ego_view"],
+            modality_keys=[
+                "ego_view",
+                "left_wrist_view",
+                "right_wrist_view"
+                ],
         ),
         "state": ModalityConfig(
             delta_indices=[0],
@@ -375,9 +379,11 @@ MODALITY_CONFIGS = {
     },
     "unitree_g1_29dof_hand": {    
         "video": ModalityConfig(
-            delta_indices=[0],
+            delta_indices=[-20, -10, 0],
             modality_keys=[
-                "ego_view"
+                "ego_view",
+                "left_wrist_view",
+                "right_wrist_view"
             ],
         ),
         "state": ModalityConfig(

@@ -22,7 +22,7 @@ EMBODIMENT_TAG_3="UNITREE_G1_29DOF"
 MODALITY_NAME="modality_window_with_hand"
 
 NUM_GPUS=8
-BATCH_PER_GPU=180
+BATCH_PER_GPU=120
 GLOBAL_BATCH_SIZE=$((NUM_GPUS * BATCH_PER_GPU))
 export WANDB_API_KEY="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"
 export WANDB_ENTITY="liyifansmx-westlake-university"
@@ -65,7 +65,7 @@ torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29500 \
     --dataset_embodiment_tags "${EMBODIMENT_TAG_1}" "${EMBODIMENT_TAG_2}" "${EMBODIMENT_TAG_3}" \
     --dataset_mix_ratios "3" "1" "2" \
     --num_gpus "${NUM_GPUS}" \
-    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_mixture_3views" \
+    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_mixture_3views_1s" \
     --save_total_limit 5 \
     --save-steps 10000 \
     --max-steps 80000 \
