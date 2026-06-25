@@ -35,18 +35,27 @@ class FinetuneConfig:
     If provided, this takes precedence over dataset_path.
     """
 
+    dataset_path_groups: list[str] | None = None
+    """
+    Groups of LeRobot dataset root directories for multi-dataset finetuning.
+    Each group is a comma-separated string of paths, for example:
+    "/path/to/old_A,/path/to/new_A" "/path/to/B" "/path/to/C".
+    Grouped paths share one mix ratio and one embodiment tag.
+    If provided, this takes precedence over dataset_paths and dataset_path.
+    """
+
     dataset_mix_ratios: list[float] | None = None
     """
-    Optional per-dataset sampling ratios for dataset_paths.
-    If omitted, all datasets use ratio 1.0.
-    Must have the same length as dataset_paths when provided.
+    Optional per-dataset sampling ratios for dataset_paths or dataset_path_groups.
+    If omitted, all datasets/groups use ratio 1.0.
+    Must have the same length as dataset_paths or dataset_path_groups when provided.
     """
 
     dataset_embodiment_tags: list[EmbodimentTag] | None = None
     """
-    Optional per-dataset embodiment tags for dataset_paths.
+    Optional per-dataset embodiment tags for dataset_paths or dataset_path_groups.
     If omitted, all datasets use embodiment_tag.
-    Must have the same length as dataset_paths when provided.
+    Must have the same length as dataset_paths or dataset_path_groups when provided.
     """
 
     init_model_from: str | None = None
