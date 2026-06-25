@@ -62,9 +62,6 @@ class Gr00tN1d6ActionHead(nn.Module):
             hidden_dim=self.hidden_size,
             output_dim=self.action_dim,
         )
-        self.schedule_encoder = nn.Linear(1, self.input_embedding_dim)
-        nn.init.zeros_(self.schedule_encoder.weight)
-        nn.init.zeros_(self.schedule_encoder.bias)
 
         self.vlln = (
             nn.LayerNorm(config.backbone_embedding_dim) if config.use_vlln else nn.Identity()
@@ -143,6 +140,50 @@ class Gr00tN1d6ActionHead(nn.Module):
         sample = (1 - sample) * self.config.noise_s
         return sample
 
+    def _inject_schedule_into_padding(
+        self,
+        actions: torch.Tensor,
+        action_mask: torch.Tensor | None,
+        w: torch.Tensor,
+        schedule_dim: int | None = None,
+    ) -> torch.Tensor:
+        if action_mask is None and schedule_dim is None:
+            return actions
+
+        if schedule_dim is None:
+            pad_dim_mask = ~action_mask.bool().any(dim=1)
+            has_pad_dim = pad_dim_mask.any(dim=-1)
+            if not has_pad_dim.any():
+                return actions
+            schedule_dims = pad_dim_mask.float().argmax(dim=-1)
+        else:
+            if not 0 <= schedule_dim < actions.shape[-1]:
+                raise ValueError(
+                    f"schedule_dim must be in [0, {actions.shape[-1]}), got {schedule_dim}"
+                )
+            schedule_dims = torch.full(
+                size=(actions.shape[0],),
+                fill_value=schedule_dim,
+                device=actions.device,
+                dtype=torch.long,
+            )
+            has_pad_dim = torch.ones(actions.shape[0], device=actions.device, dtype=torch.bool)
+
+        schedule_values = w.to(device=actions.device, dtype=actions.dtype)
+        if schedule_values.dim() == 1:
+            schedule_values = schedule_values.view(1, -1, 1)
+        elif schedule_values.dim() == 2:
+            schedule_values = schedule_values.unsqueeze(0)
+        if schedule_values.shape[0] == 1 and actions.shape[0] != 1:
+            schedule_values = schedule_values.expand(actions.shape[0], -1, -1)
+
+        actions_with_schedule = actions.clone()
+        for batch_idx in torch.nonzero(has_pad_dim, as_tuple=False).flatten():
+            actions_with_schedule[batch_idx, :, schedule_dims[batch_idx]] = schedule_values[
+                batch_idx, :, 0
+            ]
+        return actions_with_schedule
+
     def process_backbone_output(self, backbone_output: BatchFeature) -> BatchFeature:
         backbone_features = backbone_output["backbone_features"]
         backbone_features = self.vlln(backbone_features)
@@ -199,8 +240,8 @@ class Gr00tN1d6ActionHead(nn.Module):
             noise = torch.randn_like(state_features) * self.state_additive_noise_scale
             state_features = state_features + noise
 
-        
         actions = action_input.action
+        action_mask = action_input.action_mask
         # build rtc softmask
         H = actions.shape[1]
 
@@ -252,13 +293,12 @@ class Gr00tN1d6ActionHead(nn.Module):
         noisy_trajectory = (1 - t) * noise + t * actions
         velocity = (actions - noise) * (1.0 + kappa * (1 - t))
         noisy_trajectory_guidance = w * actions + (1 - w) * noisy_trajectory
-        schedule_features = self.schedule_encoder(w)
-
+        noisy_trajectory_guidance = self._inject_schedule_into_padding(
+            noisy_trajectory_guidance, action_mask, w
+        )
         # Convert (continuous) t -> discrete if needed
         t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
         action_features = self.action_encoder(noisy_trajectory_guidance, t_discretized, embodiment_id)
-        action_features = action_features + schedule_features
-
         # Maybe add position embedding.
         if self.config.add_pos_embed:
             pos_ids = torch.arange(action_features.shape[1], dtype=torch.long, device=device)
@@ -294,7 +334,6 @@ class Gr00tN1d6ActionHead(nn.Module):
         pred_actions = pred[:, -actions.shape[1] :]
 
         # Slice out only the action portion of pred and target.
-        action_mask = action_input.action_mask
         action_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
         loss = action_loss.sum() / (action_mask.sum() + 1e-6)
 
@@ -456,12 +495,18 @@ class Gr00tN1d6ActionHead(nn.Module):
             else:
                 guided_actions = actions
 
+            action_mask = action_input.action_mask if "action_mask" in action_input else None
+            guided_actions_with_schedule = self._inject_schedule_into_padding(
+                guided_actions, action_mask, w
+            )
+
             # Embed noised action trajectory.
             timesteps_tensor = torch.full(
                 size=(batch_size,), fill_value=t_discretized, device=device
             )
-            action_features = self.action_encoder(guided_actions, timesteps_tensor, embodiment_id)
-            action_features = action_features + self.schedule_encoder(w)
+            action_features = self.action_encoder(
+                guided_actions_with_schedule, timesteps_tensor, embodiment_id
+            )
             # Add position embedding.
             if self.config.add_pos_embed:
                 pos_ids = torch.arange(action_features.shape[1], dtype=torch.long, device=device)
