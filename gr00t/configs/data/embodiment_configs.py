@@ -345,7 +345,7 @@ MODALITY_CONFIGS = {
     },
     "unitree_g1_29dof": {    
         "video": ModalityConfig(
-            delta_indices=[-20,-10,0],
+            delta_indices=[0],
             modality_keys=[
                 "ego_view",
                 "left_wrist_view",
@@ -379,11 +379,43 @@ MODALITY_CONFIGS = {
     },
     "unitree_g1_29dof_hand": {    
         "video": ModalityConfig(
-            delta_indices=[-20, -10, 0],
+            delta_indices=[0],
             modality_keys=[
                 "ego_view",
                 "left_wrist_view",
                 "right_wrist_view"
+            ],
+        ),
+        "state": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=[
+                "imu_joints",
+            ],
+        ),
+        "action": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=[
+                "mocap",
+            ],
+            action_configs=[
+                # base_rotation
+                ActionConfig(
+                    rep=ActionRepresentation.ABSOLUTE,
+                    type=ActionType.NON_EEF,
+                    format=ActionFormat.DEFAULT,
+                ),
+            ],
+        ),
+        "language": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=["annotation.human.task_description"],
+        ),
+    },
+    "unitree_g1_29dof_hand_single_view": {    
+        "video": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=[
+                "ego_view",
             ],
         ),
         "state": ModalityConfig(
