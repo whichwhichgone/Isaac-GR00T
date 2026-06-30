@@ -246,15 +246,39 @@ class Gr00tN1d6ActionHead(nn.Module):
         # Slice out only the action portion of pred and target.
         action_mask = action_input.action_mask
         action_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
-        loss = action_loss.sum() / (action_mask.sum() + 1e-6)
+        body_action_dim = self.config.body_action_dim
+        if body_action_dim is None:
+            loss = action_loss.sum() / (action_mask.sum() + 1e-6)
+            body_loss = None
+            hand_loss = None
+        else:
+            if not 0 < body_action_dim < action_loss.shape[-1]:
+                raise ValueError(
+                    f"body_action_dim must be in [1, {action_loss.shape[-1] - 1}], "
+                    f"got {body_action_dim}"
+                )
 
-        return {
+            body_mask = action_mask[..., :body_action_dim]
+            hand_mask = action_mask[..., body_action_dim:]
+            body_loss_sum = action_loss[..., :body_action_dim].sum()
+            hand_loss_sum = action_loss[..., body_action_dim:].sum()
+            body_loss_count = body_mask.sum()
+            hand_loss_count = hand_mask.sum()
+            body_loss = body_loss_sum / body_loss_count.clamp_min(1e-6)
+            hand_loss = hand_loss_sum / hand_loss_count.clamp_min(1e-6)
+            loss = body_loss + 0.1 * hand_loss
+
+        outputs = {
             "loss": loss,
             "action_loss": action_loss,
             "action_mask": action_mask,
             "backbone_features": vl_embeds,
             "state_features": state_features,
         }
+        if body_loss is not None and hand_loss is not None:
+            outputs["body_loss"] = body_loss.detach()
+            outputs["hand_loss"] = hand_loss.detach()
+        return outputs
 
     def _encode_features(
         self, backbone_output: BatchFeature, action_input: BatchFeature
@@ -365,21 +389,21 @@ class Gr00tN1d6ActionHead(nn.Module):
                         :,
                     ]
                 vel_strength[:, :rtc_frozen_steps, :] = 0.0
-                # NOTE: use an exponential ramp strength to set the remaining unfrozen rtc_steps
-                intermediate_steps = rtc_overlap_steps - rtc_frozen_steps
-                # Create exponential ramp from 0 to 1 over intermediate steps
-                t = torch.linspace(0.0, 1.0, intermediate_steps + 2, device=device)
-                ramp = 1 - torch.exp(-rtc_ramp_rate * t)
-                ramp = ramp / ramp[-1].clamp_min(1e-8)  # normalize to [0,1]
-                ramp = ramp[
-                    1:-1
-                ]  # we will only take the middle part of the ramp, ignore the 0.0 and 1.0
-                # Apply ramp to the intermediate steps [batch, intermediate_steps, action_dim]
-                vel_strength[
-                    :,
-                    rtc_frozen_steps:rtc_overlap_steps,
-                    :,
-                ] = ramp[None, :, None].to(device)
+                # # NOTE: use an exponential ramp strength to set the remaining unfrozen rtc_steps
+                # intermediate_steps = rtc_overlap_steps - rtc_frozen_steps
+                # # Create exponential ramp from 0 to 1 over intermediate steps
+                # t = torch.linspace(0.0, 1.0, intermediate_steps + 2, device=device)
+                # ramp = 1 - torch.exp(-rtc_ramp_rate * t)
+                # ramp = ramp / ramp[-1].clamp_min(1e-8)  # normalize to [0,1]
+                # ramp = ramp[
+                #     1:-1
+                # ]  # we will only take the middle part of the ramp, ignore the 0.0 and 1.0
+                # # Apply ramp to the intermediate steps [batch, intermediate_steps, action_dim]
+                # vel_strength[
+                #     :,
+                #     rtc_frozen_steps:rtc_overlap_steps,
+                #     :,
+                # ] = ramp[None, :, None].to(device)
 
         # Run denoising steps.
         for t in range(self.num_inference_timesteps):

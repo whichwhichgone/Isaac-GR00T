@@ -517,9 +517,49 @@ class LeRobotEpisodeLoader:
             raise ValueError(f"Language key {lang_key} not supported")
         return new_languages
 
-    def __getitem__(self, idx: int) -> pd.DataFrame:
+    @staticmethod
+    def _normalize_requested_indices(
+        indices: np.ndarray | None, episode_length: int
+    ) -> np.ndarray:
+        if indices is None:
+            return np.arange(episode_length)
+
+        indices = np.asarray(indices, dtype=np.int64)
+        if indices.ndim != 1:
+            raise ValueError(f"Frame indices must be one-dimensional, got {indices.shape}")
+        if np.any(indices < 0) or np.any(indices >= episode_length):
+            raise IndexError(
+                f"Frame indices must be in [0, {episode_length}), got "
+                f"[{indices.min()}, {indices.max()}]"
+            )
+        return np.unique(indices)
+
+    @staticmethod
+    def _add_indexed_data(
+        df: pd.DataFrame,
+        prefix: str,
+        data: dict[str, np.ndarray],
+        indices: np.ndarray,
+    ) -> None:
+        """Add decoded data at selected rows without materializing unused frames."""
+        for key, values in data.items():
+            assert len(values) == len(indices), (
+                f"{prefix} data for {key} has length {len(values)}, "
+                f"expected {len(indices)}"
+            )
+            indexed_values = [None] * len(df)
+            for row_index, value in zip(indices, values):
+                indexed_values[int(row_index)] = value
+            df[f"{prefix}.{key}"] = indexed_values
+
+    def get_episode(
+        self,
+        idx: int,
+        video_indices: np.ndarray | None = None,
+        mask_indices: np.ndarray | None = None,
+    ) -> pd.DataFrame:
         """
-        Load complete episode data as a processed DataFrame.
+        Load episode data, optionally decoding only selected video and mask rows.
 
         Combines parquet data loading and video decoding to create a unified DataFrame
         containing all modality data for the episode. Video frames are converted to
@@ -555,25 +595,22 @@ class LeRobotEpisodeLoader:
         actual_length = min(len(df), nominal_length)
         df = df.iloc[:actual_length]
 
-        # Load synchronized video data
-        video_data = self._load_video_data(episode_id, np.arange(actual_length))
+        video_indices = self._normalize_requested_indices(video_indices, actual_length)
+        mask_indices = self._normalize_requested_indices(mask_indices, actual_length)
 
-        # Add video frames to dataframe as PIL Images
-        for key in video_data.keys():
-            assert len(video_data[key]) == len(df), (
-                f"Video data for {key} has length {len(video_data[key])} but dataframe has length {len(df)}"
-            )
-            df[f"video.{key}"] = [frame for frame in video_data[key]]
+        # Decode only rows used by the shard. Parquet and language data remain complete
+        # because they are inexpensive and preserve the original timestep indexing.
+        video_data = self._load_video_data(episode_id, video_indices)
+        self._add_indexed_data(df, "video", video_data, video_indices)
 
-        # Load synchronized mask data
-        mask_data = self._load_mask_data(episode_id, np.arange(actual_length))
-        for key in mask_data.keys():
-            assert len(mask_data[key]) == len(df), (
-                f"Mask data for {key} has length {len(mask_data[key])} but dataframe has length {len(df)}"
-            )
-            df[f"mask.{key}"] = [mask for mask in mask_data[key]]
+        mask_data = self._load_mask_data(episode_id, mask_indices)
+        self._add_indexed_data(df, "mask", mask_data, mask_indices)
 
         return df
+
+    def __getitem__(self, idx: int) -> pd.DataFrame:
+        """Load all modalities for a complete episode."""
+        return self.get_episode(idx)
 
     def get_initial_actions(self):
         """

@@ -19,12 +19,12 @@ DATASET_PATH_3="/liujinxin/liyifan/Isaac-GR00T/dataset/${REPO_NAME}"
 DATASET_PATH_4="/liujinxin/liyifan/Isaac-GR00T/dataset/G1_hand_window_pick_water_bowl_sink_0609-0610"
 DATASET_PATH_5="/liujinxin/liyifan/Isaac-GR00T/dataset/G1_real_6D_window_cont_rel_0518-0604"
 EMBODIMENT_TAG_1="UNITREE_G1_29DOF_HAND"
-EMBODIMENT_TAG_2="UNITREE_G1_29DOF_HAND"
+EMBODIMENT_TAG_2="UNITREE_G1_29DOF_HAND_SINGLE_VIEW"
 EMBODIMENT_TAG_3="UNITREE_G1_29DOF"
 MODALITY_NAME="modality_window_with_hand"
 
 NUM_GPUS=8
-BATCH_PER_GPU=180
+BATCH_PER_GPU=60
 GLOBAL_BATCH_SIZE=$((NUM_GPUS * BATCH_PER_GPU))
 export WANDB_API_KEY="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"
 export WANDB_ENTITY="liyifansmx-westlake-university"
@@ -50,9 +50,9 @@ cd /liujinxin/liyifan/Isaac-GR00T
 # conda deactivate
 source .venv/bin/activate
 
-python /liujinxin/liyifan/Isaac-GR00T/gr00t/data/stats.py \
-    --dataset-path "${DATASET_PATH_3}" \
-    --embodiment-tag "${EMBODIMENT_TAG_1}"
+# python /liujinxin/liyifan/Isaac-GR00T/gr00t/data/stats.py \
+#     --dataset-path "${DATASET_PATH_3}" \
+#     --embodiment-tag "${EMBODIMENT_TAG_1}"
 
 ulimit -n 1048576 || true
 
@@ -62,18 +62,19 @@ source .venv/bin/activate
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29500 \
     gr00t/experiment/launch_finetune.py \
-    --base-model-path /liujinxin/liyifan/Isaac-GR00T/checkpoints/GR00T-N1.6-3B \
-    --dataset-path-groups "${DATASET_PATH_1},${DATASET_PATH_2},${DATASET_PATH_3}" "${DATASET_PATH_4}" "${DATASET_PATH_5}" \
-    --dataset_embodiment_tags "${EMBODIMENT_TAG_1}" "${EMBODIMENT_TAG_2}" "${EMBODIMENT_TAG_3}" \
-    --dataset_mix_ratios "3" "1" "2" \
+    --base-model-path /liujinxin/liyifan/Isaac-GR00T/checkpoints/2026-06-25_pick_cube_bottle_g1_0616-0623_mixture_3views_1s/checkpoint-80000 \
+    --dataset-path-groups "${DATASET_PATH_1},${DATASET_PATH_2},${DATASET_PATH_3}" \
+    --dataset_embodiment_tags "${EMBODIMENT_TAG_1}" \
+    --dataset_mix_ratios "1" \
     --num_gpus "${NUM_GPUS}" \
-    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_mixture_3views" \
+    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_mixture_3views_1s_only_new" \
     --save_total_limit 5 \
     --save-steps 5000 \
     --max-steps 80000 \
     --warmup_ratio 0.05 \
+    --body_action_dim 102 \
     --weight_decay 1e-5 \
-    --learning_rate 1e-4 \
+    --learning_rate 3e-5 \
     --global_batch_size "${GLOBAL_BATCH_SIZE}" \
     --dataloader_num_workers 6 \
     --use_wandb \

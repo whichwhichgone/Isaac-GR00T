@@ -352,7 +352,7 @@ class Gr00tN1d6Processor(BaseProcessor):
                 "Expected unitree_g1_29dof_hand normalized_states to contain "
                 f"{expected_numel} values, got shape {tuple(normalized_states.shape)}"
             )
-        return normalized_states.reshape(state_horizon, state_dim)[:,:35]
+        return normalized_states.reshape(state_horizon, state_dim)
 
     def __call__(
         self,

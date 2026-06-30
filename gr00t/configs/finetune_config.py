@@ -82,6 +82,14 @@ class FinetuneConfig:
     tune_diffusion_model: bool = True
     """If True, fine-tune the diffusion-based action decoder (if present in the model)."""
 
+    body_action_dim: int | None = None
+    """
+    Number of leading action dimensions belonging to the robot body.
+    When set, the remaining valid action dimensions are treated as hand actions and
+    training uses loss = body_loss + hand_loss. If omitted, the original action loss
+    calculation is preserved.
+    """
+
     state_dropout_prob: float = 0.0
     """
     Dropout probability applied to state inputs for regularization during training.
