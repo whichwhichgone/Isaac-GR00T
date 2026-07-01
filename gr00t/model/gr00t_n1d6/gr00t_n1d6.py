@@ -62,6 +62,41 @@ class Gr00tN1d6ActionHead(nn.Module):
             hidden_dim=self.hidden_size,
             output_dim=self.action_dim,
         )
+        self.use_separate_hand_head = config.body_action_dim is not None
+        if self.use_separate_hand_head:
+            if not 0 < config.body_action_dim < self.action_dim:
+                raise ValueError(
+                    f"body_action_dim must be in [1, {self.action_dim - 1}], "
+                    f"got {config.body_action_dim}"
+                )
+            if config.hand_action_dim is None or config.hand_action_dim <= 0:
+                raise ValueError(
+                    "hand_action_dim must be a positive integer when body_action_dim is set"
+                )
+            if config.body_action_dim + config.hand_action_dim > self.action_dim:
+                raise ValueError(
+                    "body_action_dim + hand_action_dim must not exceed max_action_dim, "
+                    f"got {config.body_action_dim} + {config.hand_action_dim} > "
+                    f"{self.action_dim}"
+                )
+            if not th.isfinite(config.hand_loss_weight) or config.hand_loss_weight < 0:
+                raise ValueError(
+                    "hand_loss_weight must be finite and non-negative, "
+                    f"got {config.hand_loss_weight}"
+                )
+            # Do not encode the hand as another embodiment.  Body and hand use
+            # independent parameters while retaining the real embodiment id.
+            self.hand_action_encoder = MultiEmbodimentActionEncoder(
+                action_dim=self.action_dim,
+                hidden_size=self.input_embedding_dim,
+                num_embodiments=config.max_num_embodiments,
+            )
+            self.hand_action_decoder = CategorySpecificMLP(
+                num_categories=config.max_num_embodiments,
+                input_dim=self.hidden_size,
+                hidden_dim=self.hidden_size,
+                output_dim=self.action_dim,
+            )
 
         self.vlln = (
             nn.LayerNorm(config.backbone_embedding_dim) if config.use_vlln else nn.Identity()
@@ -100,6 +135,9 @@ class Gr00tN1d6ActionHead(nn.Module):
             self.state_encoder.requires_grad_(False)
             self.action_encoder.requires_grad_(False)
             self.action_decoder.requires_grad_(False)
+            if self.use_separate_hand_head:
+                self.hand_action_encoder.requires_grad_(False)
+                self.hand_action_decoder.requires_grad_(False)
             if self.config.add_pos_embed:
                 self.position_embedding.requires_grad_(False)
             if self.state_dropout_prob > 0:
@@ -130,6 +168,9 @@ class Gr00tN1d6ActionHead(nn.Module):
                 self.state_encoder.eval()
                 self.action_encoder.eval()
                 self.action_decoder.eval()
+                if self.use_separate_hand_head:
+                    self.hand_action_encoder.eval()
+                    self.hand_action_decoder.eval()
                 if self.config.add_pos_embed:
                     self.position_embedding.eval()
             if not self.tune_diffusion_model:
@@ -139,6 +180,85 @@ class Gr00tN1d6ActionHead(nn.Module):
         sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype)
         sample = (1 - sample) * self.config.noise_s
         return sample
+
+    def _action_coordinate_masks(
+        self, actions: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return broadcastable body/hand masks over the action dimension."""
+        if not self.use_separate_hand_head:
+            raise RuntimeError("Body/hand masks require body_action_dim to be configured")
+        indices = torch.arange(actions.shape[-1], device=actions.device)
+        body_mask = (indices < self.config.body_action_dim).to(actions.dtype)
+        hand_start = self.config.body_action_dim
+        hand_end = hand_start + self.config.hand_action_dim
+        hand_mask = ((indices >= hand_start) & (indices < hand_end)).to(actions.dtype)
+        return body_mask.view(1, 1, -1), hand_mask.view(1, 1, -1)
+
+    def _encode_action_features(
+        self,
+        actions: torch.Tensor,
+        timesteps: torch.Tensor,
+        embodiment_id: torch.Tensor,
+    ) -> torch.Tensor:
+        """Encode one action stream, or independent body and hand token streams."""
+        if not self.use_separate_hand_head:
+            return self.action_encoder(actions, timesteps, embodiment_id)
+
+        body_mask, hand_mask = self._action_coordinate_masks(actions)
+        body_features = self.action_encoder(actions * body_mask, timesteps, embodiment_id)
+        hand_features = self.hand_action_encoder(
+            actions * hand_mask, timesteps, embodiment_id
+        )
+        # Layout is [body tokens (H), hand tokens (H)].
+        return torch.cat((body_features, hand_features), dim=1)
+
+    def _decode_action_velocity(
+        self,
+        model_output: torch.Tensor,
+        action_horizon: int,
+        embodiment_id: torch.Tensor,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """Decode the action-token portion of the DiT output."""
+        if not self.use_separate_hand_head:
+            pred = self.action_decoder(model_output, embodiment_id)
+            return pred[:, -action_horizon:], None, None
+
+        action_hidden = model_output[:, -(2 * action_horizon) :]
+        body_hidden = action_hidden[:, :action_horizon]
+        hand_hidden = action_hidden[:, action_horizon:]
+        pred_body = self.action_decoder(body_hidden, embodiment_id)
+        pred_hand = self.hand_action_decoder(hand_hidden, embodiment_id)
+        body_mask, hand_mask = self._action_coordinate_masks(pred_body)
+        pred_body = pred_body * body_mask
+        pred_hand = pred_hand * hand_mask
+        return pred_body + pred_hand, pred_body, pred_hand
+
+    def _add_action_position_embedding(
+        self, action_features: torch.Tensor
+    ) -> torch.Tensor:
+        """Add temporal positions without treating hand tokens as later timesteps."""
+        if not self.config.add_pos_embed:
+            return action_features
+
+        sequence_length = action_features.shape[1]
+        if self.use_separate_hand_head:
+            if sequence_length % 2 != 0:
+                raise ValueError(
+                    "Split body/hand action features must contain two equal token streams, "
+                    f"got sequence length {sequence_length}"
+                )
+            horizon = sequence_length // 2
+            # Token layout is [body_0..body_H-1, hand_0..hand_H-1].
+            # Both streams represent the same H temporal positions.
+            pos_ids = torch.arange(horizon, dtype=torch.long, device=action_features.device)
+            pos_ids = pos_ids.repeat(2)
+        else:
+            pos_ids = torch.arange(
+                sequence_length, dtype=torch.long, device=action_features.device
+            )
+
+        pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
+        return action_features + pos_embs
 
     def process_backbone_output(self, backbone_output: BatchFeature) -> BatchFeature:
         backbone_features = backbone_output["backbone_features"]
@@ -199,6 +319,9 @@ class Gr00tN1d6ActionHead(nn.Module):
         # Embed noised action trajectory.
         actions = action_input.action
         noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype)
+        if self.use_separate_hand_head:
+            body_mask, hand_mask = self._action_coordinate_masks(actions)
+            noise = noise * (body_mask + hand_mask)
         t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
         t = t[:, None, None]  # shape (B,1,1) for broadcast
 
@@ -207,13 +330,11 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         # Convert (continuous) t -> discrete if needed
         t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
-        action_features = self.action_encoder(noisy_trajectory, t_discretized, embodiment_id)
+        action_features = self._encode_action_features(
+            noisy_trajectory, t_discretized, embodiment_id
+        )
 
-        # Maybe add position embedding.
-        if self.config.add_pos_embed:
-            pos_ids = torch.arange(action_features.shape[1], dtype=torch.long, device=device)
-            pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
-            action_features = action_features + pos_embs
+        action_features = self._add_action_position_embedding(action_features)
 
         # Join vision, language, state and action embedding along sequence dimension.
         sa_embs = torch.cat((state_features, action_features), dim=1)
@@ -240,33 +361,29 @@ class Gr00tN1d6ActionHead(nn.Module):
                 return_all_hidden_states=True,
             )
 
-        pred = self.action_decoder(model_output, embodiment_id)
-        pred_actions = pred[:, -actions.shape[1] :]
+        pred_actions, _, _ = self._decode_action_velocity(
+            model_output, actions.shape[1], embodiment_id
+        )
 
         # Slice out only the action portion of pred and target.
         action_mask = action_input.action_mask
         action_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
-        body_action_dim = self.config.body_action_dim
-        if body_action_dim is None:
+        if not self.use_separate_hand_head:
             loss = action_loss.sum() / (action_mask.sum() + 1e-6)
             body_loss = None
             hand_loss = None
         else:
-            if not 0 < body_action_dim < action_loss.shape[-1]:
-                raise ValueError(
-                    f"body_action_dim must be in [1, {action_loss.shape[-1] - 1}], "
-                    f"got {body_action_dim}"
-                )
-
+            body_action_dim = self.config.body_action_dim
+            hand_action_end = body_action_dim + self.config.hand_action_dim
             body_mask = action_mask[..., :body_action_dim]
-            hand_mask = action_mask[..., body_action_dim:]
+            hand_mask = action_mask[..., body_action_dim:hand_action_end]
             body_loss_sum = action_loss[..., :body_action_dim].sum()
-            hand_loss_sum = action_loss[..., body_action_dim:].sum()
+            hand_loss_sum = action_loss[..., body_action_dim:hand_action_end].sum()
             body_loss_count = body_mask.sum()
             hand_loss_count = hand_mask.sum()
             body_loss = body_loss_sum / body_loss_count.clamp_min(1e-6)
             hand_loss = hand_loss_sum / hand_loss_count.clamp_min(1e-6)
-            loss = body_loss + 0.1 * hand_loss
+            loss = body_loss + self.config.hand_loss_weight * hand_loss
 
         outputs = {
             "loss": loss,
@@ -340,6 +457,9 @@ class Gr00tN1d6ActionHead(nn.Module):
             dtype=vl_embeds.dtype,
             device=device,
         )
+        if self.use_separate_hand_head:
+            body_mask, hand_mask = self._action_coordinate_masks(actions)
+            actions = actions * (body_mask + hand_mask)
 
         dt = 1.0 / self.num_inference_timesteps
         vel_strength = torch.ones_like(actions)
@@ -405,6 +525,10 @@ class Gr00tN1d6ActionHead(nn.Module):
                 #     :,
                 # ] = ramp[None, :, None].to(device)
 
+        if self.use_separate_hand_head:
+            body_mask, hand_mask = self._action_coordinate_masks(actions)
+            actions = actions * (body_mask + hand_mask)
+
         # Run denoising steps.
         for t in range(self.num_inference_timesteps):
             t_cont = t / float(self.num_inference_timesteps)  # e.g. goes 0, 1/N, 2/N, ...
@@ -414,12 +538,10 @@ class Gr00tN1d6ActionHead(nn.Module):
             timesteps_tensor = torch.full(
                 size=(batch_size,), fill_value=t_discretized, device=device
             )
-            action_features = self.action_encoder(actions, timesteps_tensor, embodiment_id)
-            # Add position embedding.
-            if self.config.add_pos_embed:
-                pos_ids = torch.arange(action_features.shape[1], dtype=torch.long, device=device)
-                pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
-                action_features = action_features + pos_embs
+            action_features = self._encode_action_features(
+                actions, timesteps_tensor, embodiment_id
+            )
+            action_features = self._add_action_position_embedding(action_features)
 
             # Join vision, language, state and action embedding along sequence dimension.
             sa_embs = torch.cat((state_features, action_features), dim=1)
@@ -439,9 +561,9 @@ class Gr00tN1d6ActionHead(nn.Module):
                     encoder_hidden_states=vl_embeds,
                     timestep=timesteps_tensor,
                 )
-            pred = self.action_decoder(model_output, embodiment_id)
-
-            pred_velocity = pred[:, -self.action_horizon :]
+            pred_velocity, _, _ = self._decode_action_velocity(
+                model_output, self.action_horizon, embodiment_id
+            )
 
             # Update actions using euler integration.
             actions = actions + dt * pred_velocity * vel_strength
@@ -604,6 +726,9 @@ class Gr00tN1d6ActionHead(nn.Module):
             dtype=dtype,
             device=device,
         )
+        if self.use_separate_hand_head:
+            body_mask, hand_mask = self._action_coordinate_masks(actions)
+            actions = actions * (body_mask + hand_mask)
 
         dt = 1.0 / self.num_inference_timesteps
 
@@ -677,20 +802,13 @@ class Gr00tN1d6ActionHead(nn.Module):
                 Returns:
                     pred_velocity: [B, H, action_dim]
                 """
-                action_features = self.action_encoder(
+                action_features = self._encode_action_features(
                     action_input,
                     timesteps_tensor,
                     embodiment_id,
                 )
 
-                if self.config.add_pos_embed:
-                    pos_ids = torch.arange(
-                        action_features.shape[1],
-                        dtype=torch.long,
-                        device=device,
-                    )
-                    pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
-                    action_features = action_features + pos_embs
+                action_features = self._add_action_position_embedding(action_features)
 
                 sa_embs = torch.cat((state_features, action_features), dim=1)
 
@@ -709,8 +827,9 @@ class Gr00tN1d6ActionHead(nn.Module):
                         timestep=timesteps_tensor,
                     )
 
-                pred = self.action_decoder(model_output, embodiment_id)
-                pred_velocity = pred[:, -H:, :]
+                pred_velocity, _, _ = self._decode_action_velocity(
+                    model_output, H, embodiment_id
+                )
                 return pred_velocity
 
             if use_rtc:

@@ -164,6 +164,8 @@ if __name__ == "__main__":
     config.model.tune_projector = ft_config.tune_projector
     config.model.tune_diffusion_model = ft_config.tune_diffusion_model
     config.model.body_action_dim = ft_config.body_action_dim
+    config.model.hand_action_dim = ft_config.hand_action_dim
+    config.model.hand_loss_weight = ft_config.hand_loss_weight
     config.model.state_dropout_prob = ft_config.state_dropout_prob
     config.model.random_rotation_angle = ft_config.random_rotation_angle
     config.model.color_jitter_params = ft_config.color_jitter_params

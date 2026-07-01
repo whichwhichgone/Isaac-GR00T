@@ -67,7 +67,7 @@ torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29500 \
     --dataset_embodiment_tags "${EMBODIMENT_TAG_1}" \
     --dataset_mix_ratios "1" \
     --num_gpus "${NUM_GPUS}" \
-    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_mixture_3views_1s_only_new" \
+    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_mixture_3views_only_new_body_hand" \
     --save_total_limit 5 \
     --save-steps 5000 \
     --max-steps 80000 \

@@ -86,9 +86,15 @@ class FinetuneConfig:
     """
     Number of leading action dimensions belonging to the robot body.
     When set, the remaining valid action dimensions are treated as hand actions and
-    training uses loss = body_loss + hand_loss. If omitted, the original action loss
-    calculation is preserved.
+    independent body/hand action encoders and decoders are enabled. If omitted, the
+    original single-head model is preserved.
     """
+
+    hand_action_dim: int | None = None
+    """Number of hand dimensions immediately following the body action dimensions."""
+
+    hand_loss_weight: float = 0.1
+    """Weight applied to hand loss when body_action_dim enables the split action head."""
 
     state_dropout_prob: float = 0.0
     """
