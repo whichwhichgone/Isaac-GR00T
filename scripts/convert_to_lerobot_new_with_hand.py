@@ -266,10 +266,8 @@ def convert(args: "DataSetArgs") -> None:
 class DataSetArgs:
     input_dirs: list[Path] = field(
         default_factory=lambda: [
-            Path("/liujinxin/dataset/piper/G1/0626_pick_cube_bottle_four_g1_5cube"),
-            Path("/liujinxin/dataset/piper/G1/0626_pick_cube_bottle_g1"),
-            Path("/liujinxin/dataset/piper/G1/0626_pick_cube_bottle_g1_5cube"),
-            Path("/liujinxin/dataset/piper/G1/0626_pick_cube_bottle_g1_mid"),
+            Path("/liujinxin/dataset/piper/G1/0629_pick_cube_bottle_g1"),
+            Path("/liujinxin/dataset/piper/G1/0630_pick_cube_bottle_g1_sink"),
         ]
     )
     """One or more directories, each containing episode_* subfolders."""
