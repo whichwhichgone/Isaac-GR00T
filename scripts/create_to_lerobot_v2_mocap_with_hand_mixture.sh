@@ -26,7 +26,7 @@ EMBODIMENT_TAG_3="UNITREE_G1_29DOF"
 MODALITY_NAME="modality_window_with_hand"
 
 NUM_GPUS=8
-BATCH_PER_GPU=180
+BATCH_PER_GPU=140
 GLOBAL_BATCH_SIZE=$((NUM_GPUS * BATCH_PER_GPU))
 export WANDB_API_KEY="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"
 export WANDB_ENTITY="liyifansmx-westlake-university"
@@ -41,20 +41,20 @@ echo "EMBODIMENT_TAG_3=${EMBODIMENT_TAG_3}"
 echo "NUM_GPUS=${NUM_GPUS}"
 echo "GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE}"
 
-cd /liujinxin/liyifan/Isaac-GR00T
-source /liujinxin/conda3/bin/activate dreamzero
+# cd /liujinxin/liyifan/Isaac-GR00T
+# source /liujinxin/conda3/bin/activate dreamzero
 
-python scripts/convert_to_lerobot_new_with_hand.py \
-    --output_dir "${OUTPUT_PATH}"
+# python scripts/convert_to_lerobot_new_with_hand.py \
+#     --output_dir "${OUTPUT_PATH}"
 
-cp "/liujinxin/liyifan/Isaac-GR00T/scripts/${MODALITY_NAME}.json" "${DATASET_PATH_3}/meta/modality.json"
+# cp "/liujinxin/liyifan/Isaac-GR00T/scripts/${MODALITY_NAME}.json" "${DATASET_PATH_3}/meta/modality.json"
 
-conda deactivate
-source .venv/bin/activate
+# conda deactivate
+# source .venv/bin/activate
 
-python /liujinxin/liyifan/Isaac-GR00T/gr00t/data/stats.py \
-    --dataset-path "${DATASET_PATH_3}" \
-    --embodiment-tag "${EMBODIMENT_TAG_1}"
+# python /liujinxin/liyifan/Isaac-GR00T/gr00t/data/stats.py \
+#     --dataset-path "${DATASET_PATH_3}" \
+#     --embodiment-tag "${EMBODIMENT_TAG_1}"
 
 ulimit -n 1048576 || true
 
