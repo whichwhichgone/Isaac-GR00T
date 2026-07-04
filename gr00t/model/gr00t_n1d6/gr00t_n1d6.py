@@ -78,6 +78,9 @@ class Gr00tN1d6ActionHead(nn.Module):
             else None
         )
 
+        # Element-level dropout on state embeddings (zero-out, no mask token)
+        self.state_element_dropout = nn.Dropout(p=config.state_element_dropout_prob)
+
         # State noise parameters
         self.state_additive_noise_scale = config.state_additive_noise_scale
 
@@ -177,6 +180,9 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         # Embed state.
         state_features = self.state_encoder(action_input.state, embodiment_id)
+
+        # Element-level dropout on state embeddings (zero-out individual elements).
+        state_features = self.state_element_dropout(state_features)
 
         # Dropout state features.
         if self.state_dropout_prob > 0:
@@ -282,6 +288,9 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         # Embed state.
         state_features = self.state_encoder(action_input.state, embodiment_id)
+
+        # Element-level dropout on state embeddings (zero-out individual elements).
+        state_features = self.state_element_dropout(state_features)
 
         return BatchFeature(data={"backbone_features": vl_embeds, "state_features": state_features})
 

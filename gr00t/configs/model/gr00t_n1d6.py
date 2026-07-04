@@ -98,7 +98,8 @@ class Gr00tN1d6Config(PretrainedConfig):
     tune_vlln: bool = True
 
     # State Augmentation parameters
-    state_dropout_prob: float = 0.0  # State dropout probability
+    state_dropout_prob: float = 0.0  # State dropout probability (sample-level)
+    state_element_dropout_prob: float = 0.0  # Element-level dropout probability on state embeddings
     state_additive_noise_scale: float = 0.0  # Scale for additive Gaussian noise on state features
 
     # Multi-embodiment parameters

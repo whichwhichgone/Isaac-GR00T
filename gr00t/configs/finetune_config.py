@@ -54,9 +54,19 @@ class FinetuneConfig:
     Dropout probability applied to state inputs for regularization during training.
     """
 
+    state_element_dropout_prob: float = 0.0
+    """
+    Element-level dropout probability applied to state embeddings after the state encoder.
+    """
+
     # --- Data Augmentation ---
     random_rotation_angle: int | None = None
     """Maximum rotation angle (in degrees) for random rotation augmentation of input images."""
+
+    crop_fraction: float | None = None
+    """
+    Fraction of image to keep during random/center cropping (0.0 to 1.0).
+    """
 
     color_jitter_params: dict[str, float] | None = None
     """

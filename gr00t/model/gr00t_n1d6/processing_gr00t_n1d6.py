@@ -248,7 +248,7 @@ class Gr00tN1d6Processor(BaseProcessor):
         for key in joint_groups:
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
                 action_horizon = 50
-                joint_dim = 102
+                joint_dim = 114
             else:
                 joint_dim = self.state_action_processor.norm_params[embodiment_tag.value][
                     "action"
@@ -311,7 +311,7 @@ class Gr00tN1d6Processor(BaseProcessor):
     def _reshape_unitree_g1_29dof_actions(self, normalized_actions: torch.Tensor) -> torch.Tensor:
         """Reshape flattened Unitree G1 29DoF actions from (1, 4950) to (50, 99)."""
         action_horizon = 50
-        action_dim = 102
+        action_dim = 114
         expected_numel = action_horizon * action_dim
         if normalized_actions.numel() != expected_numel:
             raise ValueError(
@@ -323,7 +323,7 @@ class Gr00tN1d6Processor(BaseProcessor):
     def _reshape_unitree_g1_29dof_states(self, normalized_states: torch.Tensor) -> torch.Tensor:
         """Reshape flattened Unitree G1 29DoF states from (1, 1750) to (50, 35)."""
         state_horizon = 50
-        state_dim = 35
+        state_dim = 47
         expected_numel = state_horizon * state_dim
         if normalized_states.numel() != expected_numel:
             raise ValueError(
