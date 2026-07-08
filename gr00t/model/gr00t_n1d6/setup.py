@@ -76,6 +76,7 @@ class Gr00tN1d6Pipeline(ModelPipeline):
                 self.config.training.start_from_checkpoint,
                 tune_llm=self.config.model.tune_llm,
                 tune_visual=self.config.model.tune_visual,
+                body_action_dim=self.config.model.body_action_dim,
                 tune_projector=self.config.model.tune_projector,
                 tune_diffusion_model=self.config.model.tune_diffusion_model,
                 tune_vlln=self.config.model.tune_vlln,

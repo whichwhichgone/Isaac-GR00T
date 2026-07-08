@@ -361,14 +361,16 @@ class Gr00tPolicy(BasePolicy):
         collated_inputs = self.collate_fn(processed_inputs)
         collated_inputs = _rec_to_dtype(collated_inputs, dtype=torch.bfloat16)
 
-        gr00t_rtc_keys = {"rtc_overlap_steps", "rtc_frozen_steps", "rtc_ramp_rate"}
+        gr00t_rtc_keys = {"rtc_overlap_steps", "rtc_frozen_steps", "rtc_ramp_rate", "delay", "num_actions_rest"}
         provided_gr00t_rtc_keys = gr00t_rtc_keys.intersection(observation)
+        if not provided_gr00t_rtc_keys and options is not None:
+            provided_gr00t_rtc_keys = gr00t_rtc_keys.intersection(options)
         # Step 4: Run model inference to predict actions
         pi0_rtc_keys = {"delay_frames", "action_executed_steps"}
         provided_pi0_rtc_keys = pi0_rtc_keys.intersection(observation)
-        if provided_gr00t_rtc_keys and provided_gr00t_rtc_keys != gr00t_rtc_keys:
-            missing_gr00t_rtc_keys = sorted(gr00t_rtc_keys - provided_gr00t_rtc_keys)
-            raise ValueError(f"Incomplete GR00T RTC inputs; missing keys: {missing_gr00t_rtc_keys}")
+        # if provided_gr00t_rtc_keys and provided_gr00t_rtc_keys != gr00t_rtc_keys:
+        #     missing_gr00t_rtc_keys = sorted(gr00t_rtc_keys - provided_gr00t_rtc_keys)
+        #     raise ValueError(f"Incomplete GR00T RTC inputs; missing keys: {missing_gr00t_rtc_keys}")
         if provided_pi0_rtc_keys and provided_pi0_rtc_keys != pi0_rtc_keys:
             missing_pi0_rtc_keys = sorted(pi0_rtc_keys - provided_pi0_rtc_keys)
             raise ValueError(f"Incomplete RTC inputs; missing keys: {missing_pi0_rtc_keys}")
@@ -376,6 +378,7 @@ class Gr00tPolicy(BasePolicy):
             raise ValueError("GR00T RTC and Pi0 RTC inputs cannot be provided together")
 
         if provided_pi0_rtc_keys:
+            infer_mode = "Pi0_rtc"
             delay_frames = int(np.asarray(observation["delay_frames"]).item())
             action_executed_steps = int(
                 np.asarray(observation["action_executed_steps"]).item()
@@ -431,9 +434,15 @@ class Gr00tPolicy(BasePolicy):
             _synchronize_cuda_if_needed(self.model)
             model_inference_ms = (time.perf_counter() - model_inference_start) * 1000.0
         elif provided_gr00t_rtc_keys:
-            rtc_overlap_steps = int(np.asarray(observation["rtc_overlap_steps"]).item())
-            rtc_frozen_steps = int(np.asarray(observation["rtc_frozen_steps"]).item())
-            rtc_ramp_rate = float(np.asarray(observation["rtc_ramp_rate"]).item())
+            infer_mode = "Groot_rtc"
+            if "rtc_overlap_steps" in provided_gr00t_rtc_keys:
+                rtc_overlap_steps = int(np.asarray(observation["rtc_overlap_steps"]).item())
+                rtc_frozen_steps = int(np.asarray(observation["rtc_frozen_steps"]).item())
+                rtc_ramp_rate = float(np.asarray(observation["rtc_ramp_rate"]).item())
+            if "delay" in provided_gr00t_rtc_keys:
+                rtc_frozen_steps = int(np.asarray(options["delay"]).item())
+                rtc_overlap_steps = int(np.asarray(options["num_actions_rest"]).item())
+                rtc_ramp_rate = float(np.asarray(1))
             action_horizon = self.model.action_head.action_horizon
             if not 0 <= rtc_frozen_steps <= rtc_overlap_steps <= action_horizon:
                 raise ValueError(
@@ -473,6 +482,7 @@ class Gr00tPolicy(BasePolicy):
             _synchronize_cuda_if_needed(self.model)
             model_inference_ms = (time.perf_counter() - model_inference_start) * 1000.0
         else:
+            infer_mode = "Normal"
             preprocess_ms = (time.perf_counter() - total_start) * 1000.0
             _synchronize_cuda_if_needed(self.model)
             model_inference_start = time.perf_counter()
@@ -505,7 +515,7 @@ class Gr00tPolicy(BasePolicy):
             "total_ms": (time.perf_counter() - total_start) * 1000.0,
         }
         print(
-            "[Gr00tPolicy] inference timing: "
+            f"[{infer_mode}] inference timing: "
             f"preprocess={timing['preprocess_ms']:.2f} ms, "
             f"model={timing['model_inference_ms']:.2f} ms, "
             f"postprocess={timing['postprocess_ms']:.2f} ms, "

@@ -201,17 +201,19 @@ class Gr00tTrainer(Trainer):
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         if "loss" in logs and self._split_loss_count > 0:
             body_sum = self._split_loss_sums["body_loss"]
+            root_xyz_sum = self._split_loss_sums["root_xyz_loss"]
             hand_sum = self._split_loss_sums["hand_loss"]
             count = torch.tensor(
                 float(self._split_loss_count), device=body_sum.device, dtype=torch.float32
             )
-            local_values = torch.stack([body_sum, hand_sum, count]).reshape(1, 3)
+            local_values = torch.stack([body_sum, root_xyz_sum, hand_sum, count]).reshape(1, 4)
             gathered_values = self._nested_gather(local_values)
             total_count = gathered_values[:, 2].sum().clamp_min(1.0)
 
             logs = dict(logs)
             logs["body_loss"] = (gathered_values[:, 0].sum() / total_count).item()
-            logs["hand_loss"] = (gathered_values[:, 1].sum() / total_count).item()
+            logs["root_xyz_loss"] = (gathered_values[:, 1].sum() / total_count).item()
+            logs["hand_loss"] = (gathered_values[:, 2].sum() / total_count).item()
             self._split_loss_sums.clear()
             self._split_loss_count = 0
 

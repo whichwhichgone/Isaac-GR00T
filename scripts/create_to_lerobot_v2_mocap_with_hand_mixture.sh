@@ -10,7 +10,8 @@ else
     echo "ffmpeg already installed: $(which ffmpeg)"
     ffmpeg -version | head -n 1
 fi
-DATE="2026-06-29"
+DATE="2026-07-07"
+CHECKPOINT_NAME="pick_cube_bottle_g1_0616-0626&all_other"
 REPO_NAME="pick_cube_bottle_g1_0626"
 OUTPUT_PATH="/liujinxin/liyifan/Isaac-GR00T/dataset/${REPO_NAME}"
 DATASET_PATH_1="/liujinxin/liyifan/Isaac-GR00T/dataset/pick_cube_bottle_g1_0616-0623"
@@ -21,10 +22,11 @@ DATASET_PATH_5="/liujinxin/liyifan/Isaac-GR00T/dataset/G1_real_6D_window_cont_re
 EMBODIMENT_TAG_1="UNITREE_G1_29DOF_HAND"
 EMBODIMENT_TAG_2="UNITREE_G1_29DOF_HAND_SINGLE_VIEW"
 EMBODIMENT_TAG_3="UNITREE_G1_29DOF"
+EMBODIMENT_TAG_4="UNITREE_G1_29DOF_HAND_NO_HISTORY"
 MODALITY_NAME="modality_window_with_hand"
 
 NUM_GPUS=8
-BATCH_PER_GPU=60
+BATCH_PER_GPU=180
 GLOBAL_BATCH_SIZE=$((NUM_GPUS * BATCH_PER_GPU))
 export WANDB_API_KEY="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"
 export WANDB_ENTITY="liyifansmx-westlake-university"
@@ -39,7 +41,7 @@ echo "EMBODIMENT_TAG_3=${EMBODIMENT_TAG_3}"
 echo "NUM_GPUS=${NUM_GPUS}"
 echo "GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE}"
 
-cd /liujinxin/liyifan/Isaac-GR00T
+# cd /liujinxin/liyifan/Isaac-GR00T
 # source /liujinxin/conda3/bin/activate dreamzero
 
 # python scripts/convert_to_lerobot_new_with_hand.py \
@@ -48,7 +50,7 @@ cd /liujinxin/liyifan/Isaac-GR00T
 # cp "/liujinxin/liyifan/Isaac-GR00T/scripts/${MODALITY_NAME}.json" "${DATASET_PATH_3}/meta/modality.json"
 
 # conda deactivate
-source .venv/bin/activate
+# source .venv/bin/activate
 
 # python /liujinxin/liyifan/Isaac-GR00T/gr00t/data/stats.py \
 #     --dataset-path "${DATASET_PATH_3}" \
@@ -60,14 +62,16 @@ cd /liujinxin/liyifan/Isaac-GR00T
 source .venv/bin/activate
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29500 \
+# export CUDA_VISIBLE_DEVICES=0,1,2,3
+# export CUDA_VISIBLE_DEVICES=4,5,6,7
+torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29600 \
     gr00t/experiment/launch_finetune.py \
-    --base-model-path /liujinxin/liyifan/Isaac-GR00T/checkpoints/2026-06-25_pick_cube_bottle_g1_0616-0623_mixture_3views_1s/checkpoint-80000 \
-    --dataset-path-groups "${DATASET_PATH_1},${DATASET_PATH_2},${DATASET_PATH_3}" \
-    --dataset_embodiment_tags "${EMBODIMENT_TAG_1}" \
-    --dataset_mix_ratios "1" \
+    --base-model-path /liujinxin/liyifan/Isaac-GR00T/checkpoints/2026-06-24_pick_cube_bottle_g1_0616-0623_mixture_3views/checkpoint-50000 \
+    --dataset-path-groups "${DATASET_PATH_1},${DATASET_PATH_2},${DATASET_PATH_3}" "${DATASET_PATH_4}" "${DATASET_PATH_5}" \
+    --dataset_embodiment_tags "${EMBODIMENT_TAG_1}" "${EMBODIMENT_TAG_2}" "${EMBODIMENT_TAG_3}"\
+    --dataset_mix_ratios "3" "1" "2"\
     --num_gpus "${NUM_GPUS}" \
-    --output-dir "./checkpoints/${DATE}_${REPO_NAME}_mixture_3views_1s_only_new" \
+    --output-dir "./checkpoints/${DATE}_${CHECKPOINT_NAME}_mixture_3views_h30_dropout_0.3" \
     --save_total_limit 5 \
     --save-steps 5000 \
     --max-steps 80000 \
@@ -78,6 +82,7 @@ torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29500 \
     --global_batch_size "${GLOBAL_BATCH_SIZE}" \
     --dataloader_num_workers 6 \
     --use_wandb \
-    --color_jitter_params brightness 0.4 contrast 0.5 saturation 0.6 hue 0.1 
-#     --state_dropout_prob 0.1 \
-#     --tune_llm \
+    --color_jitter_params brightness 0.4 contrast 0.5 saturation 0.6 hue 0.1 \
+    --random_rotation_angle 10 \
+    --state_dropout_prob 0.3 \
+#     --tune_llm \    

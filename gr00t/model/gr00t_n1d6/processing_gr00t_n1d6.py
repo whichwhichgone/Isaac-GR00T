@@ -44,7 +44,7 @@ EMBODIMENT_TAG_TO_PROJECTOR_INDEX = {
     "unitree_g1_29dof": 10,
     "unitree_g1_29dof_hand": 11,
     "unitree_g1_29dof_hand_single_view": 12,
-    "unitree_g1_15x7_mocap": 15,
+    "unitree_g1_29dof_hand_no_history": 15,
     "unitree_g1_11x9_mocap": 17
 }
 
@@ -249,7 +249,7 @@ class Gr00tN1d6Processor(BaseProcessor):
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
                 action_horizon = 50
                 joint_dim = 102
-            elif embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
+            elif embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY):
                 action_horizon = 50
                 joint_dim = 114
             else:
@@ -260,7 +260,7 @@ class Gr00tN1d6Processor(BaseProcessor):
             sliced_action = action[..., :action_horizon, start_idx : start_idx + joint_dim]
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
                 sliced_action = sliced_action.reshape(sliced_action.shape[0], 1, -1)
-            if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
+            if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY):
                 sliced_action = sliced_action.reshape(sliced_action.shape[0], 1, -1)
 
             out_dict[key] = sliced_action
@@ -354,6 +354,18 @@ class Gr00tN1d6Processor(BaseProcessor):
             )
         return normalized_states.reshape(state_horizon, state_dim)
 
+    def _reshape_unitree_g1_29dof_hand_no_history_states(self, normalized_states: torch.Tensor) -> torch.Tensor:
+        """Reshape flattened Unitree G1 29DoF states from (1, 2350) to (50, 47)."""
+        state_horizon = 50
+        state_dim = 47
+        expected_numel = state_horizon * state_dim
+        if normalized_states.numel() != expected_numel:
+            raise ValueError(
+                "Expected unitree_g1_29dof_hand_no_history normalized_states to contain "
+                f"{expected_numel} values, got shape {tuple(normalized_states.shape)}"
+            )
+        return normalized_states.reshape(state_horizon, state_dim)[-1:,:]
+
     def __call__(
         self,
         messages: list[dict[str, Any]],
@@ -380,7 +392,7 @@ class Gr00tN1d6Processor(BaseProcessor):
 
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
                 normalized_actions = self._reshape_unitree_g1_29dof_actions(normalized_actions)
-            if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
+            if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY):
                 normalized_actions = self._reshape_unitree_g1_29dof_hand_actions(normalized_actions)
             action_dim = normalized_actions.shape[1]
             # Pad action to max_action_dim
@@ -422,10 +434,11 @@ class Gr00tN1d6Processor(BaseProcessor):
         )
 
         if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
-            normalized_states = self._reshape_unitree_g1_29dof_states(normalized_states)
+            normalized_states = self._reshape_unitree_g1_29dof_states(normalized_states)[:30]
         if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
-            normalized_states = self._reshape_unitree_g1_29dof_hand_states(normalized_states)
-
+            normalized_states = self._reshape_unitree_g1_29dof_hand_states(normalized_states)[:30]
+        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY:
+            normalized_states = self._reshape_unitree_g1_29dof_hand_no_history_states(normalized_states)
         normalized_states = torch.cat(
             [
                 normalized_states,

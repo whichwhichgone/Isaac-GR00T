@@ -348,8 +348,6 @@ MODALITY_CONFIGS = {
             delta_indices=[0],
             modality_keys=[
                 "ego_view",
-                "left_wrist_view",
-                "right_wrist_view"
                 ],
         ),
         "state": ModalityConfig(
@@ -379,7 +377,7 @@ MODALITY_CONFIGS = {
     },
     "unitree_g1_29dof_hand": {    
         "video": ModalityConfig(
-            delta_indices=[-20,-10,0],
+            delta_indices=[0],
             modality_keys=[
                 "ego_view",
                 "left_wrist_view",
@@ -443,10 +441,13 @@ MODALITY_CONFIGS = {
             modality_keys=["annotation.human.task_description"],
         ),
     },
-    "unitree_g1_29dof_hand_1s": {    
+    "unitree_g1_29dof_hand_no_history": {    
         "video": ModalityConfig(
             delta_indices=[0],
-            modality_keys=["ego_view"],
+            modality_keys=[
+                "ego_view",
+                "left_wrist_view",
+                "right_wrist_view"],
         ),
         "state": ModalityConfig(
             delta_indices=[0],
@@ -472,41 +473,6 @@ MODALITY_CONFIGS = {
             delta_indices=[0],
             modality_keys=["annotation.human.task_description"],
         ),
-    },
-    "unitree_g1_15x7_mocap":{    
-        "video": ModalityConfig(
-                delta_indices=[0],
-                modality_keys=["ego_view"],
-            ),
-        "state": ModalityConfig(
-            delta_indices=[0],
-            modality_keys=[
-                "base_rotation",
-                "left_leg",
-                "right_leg",
-                "waist",
-                "left_arm",
-                "right_arm",
-            ],
-        ),
-        "action": ModalityConfig(
-            delta_indices=list(range(30)),
-            modality_keys=[
-                "mocap",
-            ],
-            action_configs=[
-                # base_rotation
-                ActionConfig(
-                    rep=ActionRepresentation.ABSOLUTE,
-                    type=ActionType.NON_EEF,
-                    format=ActionFormat.DEFAULT,
-                ),
-            ],
-        ),
-        "language": ModalityConfig(
-            delta_indices=[0],
-            modality_keys=["annotation.human.task_description"],
-        )
     },
     "unitree_g1_11x9_mocap":{    
         "video": ModalityConfig(

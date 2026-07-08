@@ -257,16 +257,19 @@ class Gr00tN1d6ActionHead(nn.Module):
                     f"body_action_dim must be in [1, {action_loss.shape[-1] - 1}], "
                     f"got {body_action_dim}"
                 )
-
-            body_mask = action_mask[..., :body_action_dim]
+            root_xyz_mask = body_mask = action_mask[..., 0:3]
+            body_mask = action_mask[..., 3:body_action_dim]
             hand_mask = action_mask[..., body_action_dim:]
-            body_loss_sum = action_loss[..., :body_action_dim].sum()
+            root_xyz_loss_sum = action_loss[..., :3].sum()
+            body_loss_sum = action_loss[..., 3:body_action_dim].sum()
             hand_loss_sum = action_loss[..., body_action_dim:].sum()
+            root_xyz_loss_count = root_xyz_mask.sum()
             body_loss_count = body_mask.sum()
             hand_loss_count = hand_mask.sum()
+            root_xyz_loss = root_xyz_loss_sum / root_xyz_loss_count.clamp_min(1e-6)
             body_loss = body_loss_sum / body_loss_count.clamp_min(1e-6)
             hand_loss = hand_loss_sum / hand_loss_count.clamp_min(1e-6)
-            loss = body_loss + 0.1 * hand_loss
+            loss = body_loss + 0.1 * hand_loss + 10 * root_xyz_loss
 
         outputs = {
             "loss": loss,
@@ -276,6 +279,7 @@ class Gr00tN1d6ActionHead(nn.Module):
             "state_features": state_features,
         }
         if body_loss is not None and hand_loss is not None:
+            outputs["root_xyz_loss"] = root_xyz_loss.detach()
             outputs["body_loss"] = body_loss.detach()
             outputs["hand_loss"] = hand_loss.detach()
         return outputs

@@ -13,7 +13,7 @@ torchrun --nproc_per_node=$NUM_GPUS --master_port=29500 \
     gr00t/experiment/launch_finetune.py \
     --base-model-path /liujinxin/liyifan/Isaac-GR00T/checkpoints/GR00T-N1.6-3B \
     --dataset-path /liujinxin/liyifan/Isaac-GR00T/dataset/2026-05-24_clean_desk_place_sofa_g1_fast_sampling \
-    --embodiment_tag UNITREE_G1_15X7_MOCAP \
+    --embodiment_tag UNITREE_G1_29DOF_HAND_NO_HISTORY \
     --num_gpus $NUM_GPUS \
     --output-dir ./checkpoints/2026-05-24_clean_desk_place_sofa_g1_fast_tune_llm_sampling \
     --save_total_limit 5 \
