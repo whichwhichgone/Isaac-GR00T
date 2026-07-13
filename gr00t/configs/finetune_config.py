@@ -82,13 +82,16 @@ class FinetuneConfig:
     tune_diffusion_model: bool = True
     """If True, fine-tune the diffusion-based action decoder (if present in the model)."""
 
-    body_action_dim: int | None = None
+    selected_action_dims: list[int] | None = None
     """
-    Number of leading action dimensions belonging to the robot body.
-    When set, the remaining valid action dimensions are treated as hand actions and
-    training uses loss = body_loss + hand_loss. If omitted, the original action loss
-    calculation is preserved.
+    Optional zero-based action dimension indices whose mean MSE is weighted separately.
+    The indices may be non-contiguous. If omitted, the original action loss calculation
+    is preserved. When configured, training uses
+    remaining_loss + selected_action_weight * selected_loss.
     """
+
+    selected_action_weight: float = 1.0
+    """Weight applied to the selected dimensions' mean MSE."""
 
     state_dropout_prob: float = 0.0
     """

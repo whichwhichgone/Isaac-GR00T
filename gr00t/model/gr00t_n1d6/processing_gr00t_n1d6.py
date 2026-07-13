@@ -391,9 +391,9 @@ class Gr00tN1d6Processor(BaseProcessor):
             )  # (t, d)
 
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
-                normalized_actions = self._reshape_unitree_g1_29dof_actions(normalized_actions)
+                normalized_actions = self._reshape_unitree_g1_29dof_actions(normalized_actions)[:30]
             if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY):
-                normalized_actions = self._reshape_unitree_g1_29dof_hand_actions(normalized_actions)
+                normalized_actions = self._reshape_unitree_g1_29dof_hand_actions(normalized_actions)[:30]
             action_dim = normalized_actions.shape[1]
             # Pad action to max_action_dim
             normalized_actions = torch.cat(
@@ -434,9 +434,9 @@ class Gr00tN1d6Processor(BaseProcessor):
         )
 
         if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
-            normalized_states = self._reshape_unitree_g1_29dof_states(normalized_states)[:30]
+            normalized_states = self._reshape_unitree_g1_29dof_states(normalized_states)
         if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
-            normalized_states = self._reshape_unitree_g1_29dof_hand_states(normalized_states)[:30]
+            normalized_states = self._reshape_unitree_g1_29dof_hand_states(normalized_states)
         if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY:
             normalized_states = self._reshape_unitree_g1_29dof_hand_no_history_states(normalized_states)
         normalized_states = torch.cat(

@@ -453,6 +453,7 @@ class StateActionProcessor:
         Raises:
             ValueError: If state is None but required for relative->absolute conversion
         """
+        action_horizon = 30
         raw_mocap_tail = None
         if embodiment_tag in (
             EmbodimentTag.UNITREE_G1_29DOF.value,
@@ -495,7 +496,8 @@ class StateActionProcessor:
             mocap_shape = unnormalized_values["mocap"].shape
             mocap = unnormalized_values["mocap"].reshape(-1, 114)
             mocap[:, 36:102] = raw_mocap_tail
-            unnormalized_values["mocap"] = mocap.reshape(mocap_shape)
+            # unnormalized_values["mocap"] = mocap.reshape(mocap_shape)
+            unnormalized_values["mocap"] = mocap[:action_horizon].reshape(-1)[None,None,:]
 
         # Step 2: Convert relative actions to absolute (if needed)
         action_configs = self.modality_configs[embodiment_tag]["action"].action_configs

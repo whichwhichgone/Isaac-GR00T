@@ -1,4 +1,13 @@
+import math as th
 from typing import Any, Optional, Tuple
+
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.distributions import Beta
+import tree
+from transformers import AutoConfig, AutoModel, PreTrainedModel
+from transformers.feature_extraction_utils import BatchFeature
 
 from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
 from gr00t.model.modules.dit import AlternateVLDiT, DiT
@@ -7,14 +16,10 @@ from gr00t.model.modules.embodiment_conditioned_mlp import (
     CategorySpecificMLP,
     MultiEmbodimentActionEncoder,
 )
-import torch
-from torch import nn
-from torch.distributions import Beta
-import torch.nn.functional as F
-from transformers import AutoConfig, AutoModel, PreTrainedModel
-from transformers.feature_extraction_utils import BatchFeature
-import tree
-import math as th
+from gr00t.utils.action_loss import (
+    build_selected_action_dim_mask,
+    compute_weighted_action_loss,
+)
 
 
 class Gr00tN1d6ActionHead(nn.Module):
@@ -27,6 +32,23 @@ class Gr00tN1d6ActionHead(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.input_embedding_dim = config.input_embedding_dim
+        self.action_dim = config.max_action_dim
+        self.action_horizon = config.action_horizon
+        self.num_inference_timesteps = config.num_inference_timesteps
+        if config.selected_action_weight < 0:
+            raise ValueError(
+                f"selected_action_weight must be non-negative, got {config.selected_action_weight}"
+            )
+        selected_dim_mask = build_selected_action_dim_mask(
+            config.selected_action_dims, self.action_dim
+        )
+        self.register_buffer(
+            "selected_action_dim_mask",
+            selected_dim_mask
+            if selected_dim_mask is not None
+            else torch.empty(0, dtype=torch.bool),
+            persistent=False,
+        )
 
         # Initialize components directly from config
         if config.use_alternate_vl_dit:
@@ -41,10 +63,6 @@ class Gr00tN1d6ActionHead(nn.Module):
                 **config.diffusion_model_cfg, cross_attention_dim=config.backbone_embedding_dim
             )
             print("Using DiT for diffusion model")
-        self.action_dim = config.max_action_dim
-        self.action_horizon = config.action_horizon
-        self.num_inference_timesteps = config.num_inference_timesteps
-
         self.state_encoder = CategorySpecificMLP(
             num_categories=config.max_num_embodiments,
             input_dim=config.max_state_dim,
@@ -246,30 +264,15 @@ class Gr00tN1d6ActionHead(nn.Module):
         # Slice out only the action portion of pred and target.
         action_mask = action_input.action_mask
         action_loss = F.mse_loss(pred_actions, velocity, reduction="none") * action_mask
-        body_action_dim = self.config.body_action_dim
-        if body_action_dim is None:
-            loss = action_loss.sum() / (action_mask.sum() + 1e-6)
-            body_loss = None
-            hand_loss = None
-        else:
-            if not 0 < body_action_dim < action_loss.shape[-1]:
-                raise ValueError(
-                    f"body_action_dim must be in [1, {action_loss.shape[-1] - 1}], "
-                    f"got {body_action_dim}"
-                )
-            root_xyz_mask = body_mask = action_mask[..., 0:3]
-            body_mask = action_mask[..., 3:body_action_dim]
-            hand_mask = action_mask[..., body_action_dim:]
-            root_xyz_loss_sum = action_loss[..., :3].sum()
-            body_loss_sum = action_loss[..., 3:body_action_dim].sum()
-            hand_loss_sum = action_loss[..., body_action_dim:].sum()
-            root_xyz_loss_count = root_xyz_mask.sum()
-            body_loss_count = body_mask.sum()
-            hand_loss_count = hand_mask.sum()
-            root_xyz_loss = root_xyz_loss_sum / root_xyz_loss_count.clamp_min(1e-6)
-            body_loss = body_loss_sum / body_loss_count.clamp_min(1e-6)
-            hand_loss = hand_loss_sum / hand_loss_count.clamp_min(1e-6)
-            loss = body_loss + 0.1 * hand_loss + 10 * root_xyz_loss
+        selected_dim_mask = (
+            self.selected_action_dim_mask if self.selected_action_dim_mask.numel() > 0 else None
+        )
+        loss, split_loss_outputs = compute_weighted_action_loss(
+            action_loss,
+            action_mask,
+            selected_dim_mask,
+            self.config.selected_action_weight,
+        )
 
         outputs = {
             "loss": loss,
@@ -278,10 +281,7 @@ class Gr00tN1d6ActionHead(nn.Module):
             "backbone_features": vl_embeds,
             "state_features": state_features,
         }
-        if body_loss is not None and hand_loss is not None:
-            outputs["root_xyz_loss"] = root_xyz_loss.detach()
-            outputs["body_loss"] = body_loss.detach()
-            outputs["hand_loss"] = hand_loss.detach()
+        outputs.update(split_loss_outputs)
         return outputs
 
     def _encode_features(
@@ -393,21 +393,21 @@ class Gr00tN1d6ActionHead(nn.Module):
                         :,
                     ]
                 vel_strength[:, :rtc_frozen_steps, :] = 0.0
-                # # NOTE: use an exponential ramp strength to set the remaining unfrozen rtc_steps
-                # intermediate_steps = rtc_overlap_steps - rtc_frozen_steps
-                # # Create exponential ramp from 0 to 1 over intermediate steps
-                # t = torch.linspace(0.0, 1.0, intermediate_steps + 2, device=device)
-                # ramp = 1 - torch.exp(-rtc_ramp_rate * t)
-                # ramp = ramp / ramp[-1].clamp_min(1e-8)  # normalize to [0,1]
-                # ramp = ramp[
-                #     1:-1
-                # ]  # we will only take the middle part of the ramp, ignore the 0.0 and 1.0
-                # # Apply ramp to the intermediate steps [batch, intermediate_steps, action_dim]
-                # vel_strength[
-                #     :,
-                #     rtc_frozen_steps:rtc_overlap_steps,
-                #     :,
-                # ] = ramp[None, :, None].to(device)
+                # NOTE: use an exponential ramp strength to set the remaining unfrozen rtc_steps
+                intermediate_steps = rtc_overlap_steps - rtc_frozen_steps
+                # Create exponential ramp from 0 to 1 over intermediate steps
+                t = torch.linspace(0.0, 1.0, intermediate_steps + 2, device=device)
+                ramp = 1 - torch.exp(-rtc_ramp_rate * t)
+                ramp = ramp / ramp[-1].clamp_min(1e-8)  # normalize to [0,1]
+                ramp = ramp[
+                    1:-1
+                ]  # we will only take the middle part of the ramp, ignore the 0.0 and 1.0
+                # Apply ramp to the intermediate steps [batch, intermediate_steps, action_dim]
+                vel_strength[
+                    :,
+                    rtc_frozen_steps:rtc_overlap_steps,
+                    :,
+                ] = ramp[None, :, None].to(device)
 
         # Run denoising steps.
         for t in range(self.num_inference_timesteps):

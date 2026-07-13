@@ -25,6 +25,8 @@ from transformers.trainer import TRAINER_STATE_NAME, Trainer, TrainerState, get_
 from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import EvalPrediction
 
+from gr00t.utils.action_loss import SPLIT_ACTION_LOSS_KEYS, aggregate_action_loss_stats
+
 
 class ProfCallback(TrainerCallback):
     def __init__(self, prof):
@@ -200,20 +202,17 @@ class Gr00tTrainer(Trainer):
 
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         if "loss" in logs and self._split_loss_count > 0:
-            body_sum = self._split_loss_sums["body_loss"]
-            root_xyz_sum = self._split_loss_sums["root_xyz_loss"]
-            hand_sum = self._split_loss_sums["hand_loss"]
+            first_value = self._split_loss_sums[SPLIT_ACTION_LOSS_KEYS[0]]
             count = torch.tensor(
-                float(self._split_loss_count), device=body_sum.device, dtype=torch.float32
+                float(self._split_loss_count), device=first_value.device, dtype=torch.float32
             )
-            local_values = torch.stack([body_sum, root_xyz_sum, hand_sum, count]).reshape(1, 4)
+            local_values = torch.stack(
+                [self._split_loss_sums[key] for key in SPLIT_ACTION_LOSS_KEYS] + [count]
+            ).reshape(1, len(SPLIT_ACTION_LOSS_KEYS) + 1)
             gathered_values = self._nested_gather(local_values)
-            total_count = gathered_values[:, 2].sum().clamp_min(1.0)
 
             logs = dict(logs)
-            logs["body_loss"] = (gathered_values[:, 0].sum() / total_count).item()
-            logs["root_xyz_loss"] = (gathered_values[:, 1].sum() / total_count).item()
-            logs["hand_loss"] = (gathered_values[:, 2].sum() / total_count).item()
+            logs.update(aggregate_action_loss_stats(gathered_values))
             self._split_loss_sums.clear()
             self._split_loss_count = 0
 
@@ -323,14 +322,13 @@ class Gr00tTrainer(Trainer):
         self.loss = loss
 
         if model.training:
-            for key in ("body_loss", "hand_loss"):
-                if key in outputs:
+            if all(key in outputs for key in SPLIT_ACTION_LOSS_KEYS):
+                for key in SPLIT_ACTION_LOSS_KEYS:
                     value = outputs[key].detach().float()
                     if key not in self._split_loss_sums:
                         self._split_loss_sums[key] = value.clone()
                     else:
                         self._split_loss_sums[key] += value
-            if "body_loss" in outputs and "hand_loss" in outputs:
                 self._split_loss_count += 1
 
         # --------------------------------------------------------------

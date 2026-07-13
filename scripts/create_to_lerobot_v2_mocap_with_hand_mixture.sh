@@ -10,8 +10,8 @@ else
     echo "ffmpeg already installed: $(which ffmpeg)"
     ffmpeg -version | head -n 1
 fi
-DATE="2026-07-07"
-CHECKPOINT_NAME="pick_cube_bottle_g1_0616-0626&all_other"
+DATE="2026-07-13"
+CHECKPOINT_NAME="pick_cube_bottle_g1_0616-0626_all_other"
 REPO_NAME="pick_cube_bottle_g1_0626"
 OUTPUT_PATH="/liujinxin/liyifan/Isaac-GR00T/dataset/${REPO_NAME}"
 DATASET_PATH_1="/liujinxin/liyifan/Isaac-GR00T/dataset/pick_cube_bottle_g1_0616-0623"
@@ -71,12 +71,13 @@ torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29600 \
     --dataset_embodiment_tags "${EMBODIMENT_TAG_1}" "${EMBODIMENT_TAG_2}" "${EMBODIMENT_TAG_3}"\
     --dataset_mix_ratios "3" "1" "2"\
     --num_gpus "${NUM_GPUS}" \
-    --output-dir "./checkpoints/${DATE}_${CHECKPOINT_NAME}_mixture_3views_h30_dropout_0.3" \
+    --output-dir "./checkpoints/${DATE}_${CHECKPOINT_NAME}_mixture_3views_h30_dropout_0.3_5feet" \
     --save_total_limit 5 \
     --save-steps 5000 \
     --max-steps 80000 \
     --warmup_ratio 0.05 \
-    --body_action_dim 102 \
+    --selected-action-dims 0 1 2 9 10 11 15 16 17 36 37 38 39 40 41 48 49 50 51 52 53 60 61 62 63 64 65 \
+    --selected-action-weight 5.0 \
     --weight_decay 1e-5 \
     --learning_rate 3e-5 \
     --global_batch_size "${GLOBAL_BATCH_SIZE}" \
