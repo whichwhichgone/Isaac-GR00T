@@ -63,6 +63,14 @@ class FinetuneConfig:
     instead of `base_model_path`. Processor still loads from `base_model_path`.
     Use this to continue training from a prior run with a different trainable-param set."""
 
+    action_horizon: int | None = None
+    """Number of action steps predicted and supervised by the model (H_model).
+    If omitted, preserve the training config default."""
+
+    action_chunk_size: int | None = None
+    """Number of future action steps flattened in each dataset feature and its
+    normalization statistics (H_chunk). Must be at least action_horizon."""
+
     modality_config_path: str | None = None
     """
     Path to a Python file defining the modality configuration for the given embodiment. 

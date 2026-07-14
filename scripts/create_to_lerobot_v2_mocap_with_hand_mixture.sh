@@ -66,20 +66,20 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # export CUDA_VISIBLE_DEVICES=4,5,6,7
 torchrun --nproc_per_node="${NUM_GPUS}" --master_port=29600 \
     gr00t/experiment/launch_finetune.py \
-    --base-model-path /liujinxin/liyifan/Isaac-GR00T/checkpoints/2026-06-24_pick_cube_bottle_g1_0616-0623_mixture_3views/checkpoint-50000 \
+    --base-model-path /liujinxin/liyifan/Isaac-GR00T/checkpoints/GR00T-N1.6-3B \
     --dataset-path-groups "${DATASET_PATH_1},${DATASET_PATH_2},${DATASET_PATH_3}" "${DATASET_PATH_4}" "${DATASET_PATH_5}" \
     --dataset_embodiment_tags "${EMBODIMENT_TAG_1}" "${EMBODIMENT_TAG_2}" "${EMBODIMENT_TAG_3}"\
     --dataset_mix_ratios "3" "1" "2"\
     --num_gpus "${NUM_GPUS}" \
-    --output-dir "./checkpoints/${DATE}_${CHECKPOINT_NAME}_mixture_3views_h30_dropout_0.3_5feet" \
+    --output-dir "./checkpoints/${DATE}_${CHECKPOINT_NAME}_mixture_3views_h30_dropout_0.3_5feet_no_root_from_base_model" \
     --save_total_limit 5 \
     --save-steps 5000 \
     --max-steps 80000 \
     --warmup_ratio 0.05 \
-    --selected-action-dims 0 1 2 9 10 11 15 16 17 36 37 38 39 40 41 48 49 50 51 52 53 60 61 62 63 64 65 \
+    --selected-action-dims 9 10 11 15 16 17 36 37 38 39 40 41 48 49 50 51 52 53 60 61 62 63 64 65 \
     --selected-action-weight 5.0 \
     --weight_decay 1e-5 \
-    --learning_rate 3e-5 \
+    --learning_rate 1e-4 \
     --global_batch_size "${GLOBAL_BATCH_SIZE}" \
     --dataloader_num_workers 6 \
     --use_wandb \

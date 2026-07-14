@@ -20,6 +20,14 @@ from gr00t.data.types import MessageType, ModalityConfig, VLAStepData
 from .policy import BasePolicy, PolicyWrapper
 
 
+_UNITREE_HAND_TAGS = {
+    EmbodimentTag.UNITREE_G1_29DOF_HAND,
+    EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW,
+    EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY,
+}
+_UNITREE_HAND_ACTION_DIM = 114
+
+
 def _rec_to_dtype(x: Any, dtype: torch.dtype) -> Any:
     """Recursively convert all floating point tensors in a nested structure to the given dtype.
 
@@ -81,6 +89,7 @@ class Gr00tPolicy(BasePolicy):
         *,
         device: int | str,
         strict: bool = True,
+        execution_horizon: int | None = None,
     ):
         """Initialize the Gr00t Policy.
 
@@ -89,6 +98,8 @@ class Gr00tPolicy(BasePolicy):
             model_path: Path to the pretrained model checkpoint directory
             device: Device to run the model on (e.g., 'cuda:0', 0, 'cpu')
             strict: Whether to enforce strict input validation (default: True)
+            execution_horizon: Number of physical actions returned and executed
+                per chunk. Defaults to the processor setting, then H_model.
         """
         # Import this to register all models.
         import gr00t.model  # noqa: F401
@@ -119,6 +130,48 @@ class Gr00tPolicy(BasePolicy):
         assert len(language_delta_indices) == 1, "Only one language delta index is supported"
         self.language_key = language_keys[0]
         self.rtc_prev_action = None
+        self.rtc_prev_executable_action = None
+
+        state_action_processor = getattr(self.processor, "state_action_processor", None)
+        model_horizon = self.model.action_head.action_horizon
+        processor_execution_horizon = getattr(
+            self.processor, "execution_action_horizon", model_horizon
+        )
+        self.execution_horizon = int(
+            processor_execution_horizon
+            if execution_horizon is None
+            else execution_horizon
+        )
+        if not 0 < self.execution_horizon <= model_horizon:
+            raise ValueError(
+                "execution_horizon must satisfy 0 < H_exec <= H_model, got "
+                f"H_exec={self.execution_horizon}, H_model={model_horizon}"
+            )
+        if hasattr(self.processor, "execution_action_horizon"):
+            self.processor.execution_action_horizon = self.execution_horizon
+
+        if state_action_processor is not None and self.embodiment_tag in _UNITREE_HAND_TAGS:
+            params = state_action_processor.norm_params[self.embodiment_tag.value][
+                "action"
+            ]["mocap"]
+            stats_dim = int(np.asarray(params["min"]).size)
+            if stats_dim % _UNITREE_HAND_ACTION_DIM != 0:
+                raise ValueError(
+                    f"Hand action statistics dim {stats_dim} is not divisible by "
+                    f"{_UNITREE_HAND_ACTION_DIM}"
+                )
+            stats_horizon = stats_dim // _UNITREE_HAND_ACTION_DIM
+            if model_horizon > stats_horizon:
+                raise ValueError(
+                    "Hand model horizon exceeds flattened action_chunk_size: "
+                    f"H_model={model_horizon}, action_chunk_size={stats_horizon}"
+                )
+            print(
+                "[GR00T] action horizons: "
+                f"model={model_horizon}, chunk={stats_horizon}, "
+                f"execution={self.execution_horizon}",
+                flush=True,
+            )
 
     def _unbatch_observation(self, value: dict[str, Any]) -> list[dict[str, Any]]:
         """Unbatch a batched observation into a list of single observations.
@@ -361,22 +414,66 @@ class Gr00tPolicy(BasePolicy):
         collated_inputs = self.collate_fn(processed_inputs)
         collated_inputs = _rec_to_dtype(collated_inputs, dtype=torch.bfloat16)
 
-        gr00t_rtc_keys = {"rtc_overlap_steps", "rtc_frozen_steps", "rtc_ramp_rate", "delay", "num_actions_rest"}
+        gr00t_rtc_required_keys = {
+            "rtc_overlap_steps",
+            "rtc_frozen_steps",
+            "rtc_ramp_rate",
+        }
+        gr00t_rtc_optional_keys = {
+            "rtc_executed_steps",
+            "rtc_execution_horizon",
+        }
+        gr00t_rtc_legacy_keys = {"delay", "num_actions_rest"}
+        gr00t_rtc_keys = (
+            gr00t_rtc_required_keys
+            | gr00t_rtc_optional_keys
+            | gr00t_rtc_legacy_keys
+        )
         provided_gr00t_rtc_keys = gr00t_rtc_keys.intersection(observation)
+        rtc_input_source = observation
         if not provided_gr00t_rtc_keys and options is not None:
             provided_gr00t_rtc_keys = gr00t_rtc_keys.intersection(options)
+            rtc_input_source = options
         # Step 4: Run model inference to predict actions
         pi0_rtc_keys = {"delay_frames", "action_executed_steps"}
         provided_pi0_rtc_keys = pi0_rtc_keys.intersection(observation)
-        # if provided_gr00t_rtc_keys and provided_gr00t_rtc_keys != gr00t_rtc_keys:
-        #     missing_gr00t_rtc_keys = sorted(gr00t_rtc_keys - provided_gr00t_rtc_keys)
-        #     raise ValueError(f"Incomplete GR00T RTC inputs; missing keys: {missing_gr00t_rtc_keys}")
+        if provided_gr00t_rtc_keys & gr00t_rtc_required_keys:
+            missing_gr00t_rtc_keys = sorted(
+                gr00t_rtc_required_keys - provided_gr00t_rtc_keys
+            )
+            if missing_gr00t_rtc_keys:
+                raise ValueError(
+                    f"Incomplete GR00T RTC inputs; missing keys: {missing_gr00t_rtc_keys}"
+                )
+        if provided_gr00t_rtc_keys & gr00t_rtc_legacy_keys:
+            missing_legacy_keys = sorted(
+                gr00t_rtc_legacy_keys - provided_gr00t_rtc_keys
+            )
+            if missing_legacy_keys:
+                raise ValueError(
+                    f"Incomplete legacy GR00T RTC inputs; missing keys: {missing_legacy_keys}"
+                )
+        has_gr00t_rtc_inputs = bool(
+            provided_gr00t_rtc_keys & gr00t_rtc_required_keys
+        )
+        has_legacy_gr00t_rtc_inputs = bool(
+            provided_gr00t_rtc_keys & gr00t_rtc_legacy_keys
+        )
+        if provided_gr00t_rtc_keys and not (
+            has_gr00t_rtc_inputs or has_legacy_gr00t_rtc_inputs
+        ):
+            raise ValueError(
+                "RTC execution metadata was provided without overlap/frozen/ramp inputs"
+            )
+        if has_gr00t_rtc_inputs and has_legacy_gr00t_rtc_inputs:
+            raise ValueError("Do not mix GR00T RTC and legacy delay/num_actions_rest inputs")
         if provided_pi0_rtc_keys and provided_pi0_rtc_keys != pi0_rtc_keys:
             missing_pi0_rtc_keys = sorted(pi0_rtc_keys - provided_pi0_rtc_keys)
             raise ValueError(f"Incomplete RTC inputs; missing keys: {missing_pi0_rtc_keys}")
         if provided_gr00t_rtc_keys and provided_pi0_rtc_keys:
             raise ValueError("GR00T RTC and Pi0 RTC inputs cannot be provided together")
 
+        gr00t_rtc_context = None
         if provided_pi0_rtc_keys:
             infer_mode = "Pi0_rtc"
             delay_frames = int(np.asarray(observation["delay_frames"]).item())
@@ -436,22 +533,80 @@ class Gr00tPolicy(BasePolicy):
         elif provided_gr00t_rtc_keys:
             infer_mode = "Groot_rtc"
             if "rtc_overlap_steps" in provided_gr00t_rtc_keys:
-                rtc_overlap_steps = int(np.asarray(observation["rtc_overlap_steps"]).item())
-                rtc_frozen_steps = int(np.asarray(observation["rtc_frozen_steps"]).item())
-                rtc_ramp_rate = float(np.asarray(observation["rtc_ramp_rate"]).item())
-            if "delay" in provided_gr00t_rtc_keys:
-                rtc_frozen_steps = int(np.asarray(options["delay"]).item())
-                rtc_overlap_steps = int(np.asarray(options["num_actions_rest"]).item())
+                rtc_overlap_steps = int(
+                    np.asarray(rtc_input_source["rtc_overlap_steps"]).item()
+                )
+                rtc_frozen_steps = int(
+                    np.asarray(rtc_input_source["rtc_frozen_steps"]).item()
+                )
+                rtc_ramp_rate = float(
+                    np.asarray(rtc_input_source["rtc_ramp_rate"]).item()
+                )
+            elif "delay" in provided_gr00t_rtc_keys:
+                rtc_frozen_steps = int(np.asarray(rtc_input_source["delay"]).item())
+                rtc_overlap_steps = int(
+                    np.asarray(rtc_input_source["num_actions_rest"]).item()
+                )
                 rtc_ramp_rate = float(np.asarray(1))
+
             action_horizon = self.model.action_head.action_horizon
-            if not 0 <= rtc_frozen_steps <= rtc_overlap_steps <= action_horizon:
+            state_action_processor = getattr(
+                self.processor, "state_action_processor", None
+            )
+            if state_action_processor is None:
+                raise RuntimeError(
+                    "GR00T RTC requires a processor with state_action_processor"
+                )
+            default_execution_horizon = self.execution_horizon
+            rtc_execution_horizon = int(
+                np.asarray(
+                    rtc_input_source.get(
+                        "rtc_execution_horizon", default_execution_horizon
+                    )
+                ).item()
+            )
+            rtc_executed_steps = int(
+                np.asarray(
+                    rtc_input_source.get(
+                        "rtc_executed_steps",
+                        rtc_execution_horizon - rtc_overlap_steps,
+                    )
+                ).item()
+            )
+
+            if rtc_execution_horizon != self.execution_horizon:
                 raise ValueError(
-                    "GR00T RTC requires 0 <= rtc_frozen_steps <= rtc_overlap_steps "
-                    f"<= action_horizon, got frozen={rtc_frozen_steps}, "
-                    f"overlap={rtc_overlap_steps}, H={action_horizon}"
+                    "Client/server execution horizon mismatch: "
+                    f"client={rtc_execution_horizon}, "
+                    f"server={self.execution_horizon}"
+                )
+
+            if not 0 <= rtc_frozen_steps <= rtc_overlap_steps:
+                raise ValueError(
+                    "GR00T RTC requires 0 <= frozen <= overlap, "
+                    f"got frozen={rtc_frozen_steps}, overlap={rtc_overlap_steps}"
+                )
+            if not (
+                0
+                <= rtc_executed_steps
+                <= rtc_execution_horizon
+                <= action_horizon
+            ):
+                raise ValueError(
+                    "GR00T RTC execution horizon must lie inside the model horizon, "
+                    f"got executed={rtc_executed_steps}, "
+                    f"H_exec={rtc_execution_horizon}, H_model={action_horizon}"
+                )
+            if rtc_executed_steps + rtc_overlap_steps != rtc_execution_horizon:
+                raise ValueError(
+                    "GR00T RTC overlap must be the unexecuted part of the physical "
+                    "chunk: executed + overlap == execution_horizon, got "
+                    f"{rtc_executed_steps} + {rtc_overlap_steps} != "
+                    f"{rtc_execution_horizon}"
                 )
             if not np.isfinite(rtc_ramp_rate) or rtc_ramp_rate <= 0:
                 raise ValueError(f"rtc_ramp_rate must be positive, got {rtc_ramp_rate}")
+
             previous_actions = self.rtc_prev_action
             expected_rtc_shape = (
                 len(unbatched_observations),
@@ -463,13 +618,44 @@ class Gr00tPolicy(BasePolicy):
                     "GR00T RTC previous actions must contain the full normalized model chunk "
                     f"with shape {expected_rtc_shape}, got {previous_actions.shape}"
                 )
-            if previous_actions is not None and not torch.isfinite(previous_actions).all():
+            if previous_actions is None:
+                raise RuntimeError(
+                    "GR00T RTC was requested before a previous action chunk was cached"
+                )
+            if not torch.isfinite(previous_actions).all():
                 raise ValueError("GR00T RTC previous actions must contain only finite values")
+
+            # Select old[s:H_exec], not old[-overlap:], and remap flattened
+            # per-time normalization statistics to the new slots [0:overlap].
+            aligned_segment = state_action_processor.remap_rtc_normalized_action(
+                previous_actions.detach().float().cpu().numpy(),
+                self.embodiment_tag.value,
+                source_start=rtc_executed_steps,
+                target_start=0,
+                steps=rtc_overlap_steps,
+            )
+            rtc_previous_actions = previous_actions.detach().clone()
+            rtc_previous_actions[
+                :,
+                rtc_executed_steps : rtc_executed_steps + rtc_overlap_steps,
+                :,
+            ] = torch.as_tensor(
+                aligned_segment,
+                device=previous_actions.device,
+                dtype=previous_actions.dtype,
+            )
+
             rtc_options = {
                 "rtc_overlap_steps": rtc_overlap_steps,
                 "rtc_frozen_steps": rtc_frozen_steps,
                 "rtc_ramp_rate": rtc_ramp_rate,
-                "rtc_prev_action": previous_actions,
+                "rtc_executed_steps": rtc_executed_steps,
+                "rtc_prev_action": rtc_previous_actions,
+            }
+            gr00t_rtc_context = {
+                "executed_steps": rtc_executed_steps,
+                "frozen_steps": rtc_frozen_steps,
+                "execution_horizon": rtc_execution_horizon,
             }
             preprocess_ms = (time.perf_counter() - total_start) * 1000.0
             _synchronize_cuda_if_needed(self.model)
@@ -505,6 +691,50 @@ class Gr00tPolicy(BasePolicy):
         casted_action = {
             key: value.astype(np.float32) for key, value in unnormalized_action.items()
         }
+
+        if self.embodiment_tag in _UNITREE_HAND_TAGS:
+            execution_horizon = self.execution_horizon
+            mocap_action = casted_action["mocap"]
+            expected_feature_dim = execution_horizon * _UNITREE_HAND_ACTION_DIM
+            if (
+                mocap_action.ndim != 3
+                or mocap_action.shape[1] != 1
+                or mocap_action.shape[2] != expected_feature_dim
+            ):
+                raise ValueError(
+                    "Decoded hand action must have shape "
+                    f"(B, 1, {expected_feature_dim}), got {mocap_action.shape}"
+                )
+            executable_action = mocap_action.reshape(
+                mocap_action.shape[0], execution_horizon, _UNITREE_HAND_ACTION_DIM
+            )
+
+            if gr00t_rtc_context is not None:
+                if self.rtc_prev_executable_action is None:
+                    raise RuntimeError(
+                        "GR00T RTC has normalized history but no physical action history"
+                    )
+                executed_steps = gr00t_rtc_context["executed_steps"]
+                frozen_steps = gr00t_rtc_context["frozen_steps"]
+                if self.rtc_prev_executable_action.shape != executable_action.shape:
+                    raise ValueError(
+                        "Previous physical RTC action shape changed: expected "
+                        f"{executable_action.shape}, got "
+                        f"{self.rtc_prev_executable_action.shape}"
+                    )
+                # Guarantee physical continuity even when re-encoding an old
+                # value into a new time slot falls outside that slot's min/max.
+                executable_action[:, :frozen_steps] = (
+                    self.rtc_prev_executable_action[
+                        :, executed_steps : executed_steps + frozen_steps
+                    ]
+                )
+                casted_action["mocap"] = executable_action.reshape(
+                    executable_action.shape[0], 1, -1
+                )
+
+            self.rtc_prev_executable_action = executable_action.copy()
+
         self.rtc_prev_action = normalized_action.detach().clone()
         postprocess_ms = (time.perf_counter() - postprocess_start) * 1000.0
 
@@ -583,6 +813,7 @@ class Gr00tPolicy(BasePolicy):
             Dictionary containing the info after resetting the policy
         """
         self.rtc_prev_action = None
+        self.rtc_prev_executable_action = None
         self.model.action_head.rtc_prev_actions = None
         return {}
 
@@ -783,6 +1014,8 @@ class Gr00tSimPolicyWrapper(PolicyWrapper):
             "rtc_overlap_steps",
             "rtc_frozen_steps",
             "rtc_ramp_rate",
+            "rtc_executed_steps",
+            "rtc_execution_horizon",
             "delay_frames",
             "action_executed_steps",
             "rtc_beta",

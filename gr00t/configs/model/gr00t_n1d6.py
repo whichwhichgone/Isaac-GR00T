@@ -57,6 +57,10 @@ class Gr00tN1d6Config(PretrainedConfig):
     max_state_dim: int = 29  # Default from state_shape
     max_action_dim: int = 29  # Default from action_shape
     action_horizon: int = 16
+    # Number of physical steps flattened into one dataset action feature. This
+    # may be larger than action_horizon; normalization statistics retain all
+    # action_chunk_size positions.
+    action_chunk_size: int | None = None
     selected_action_dims: list[int] | None = None
     selected_action_weight: float = 1.0
     hidden_size: int = 1024
@@ -123,6 +127,19 @@ class Gr00tN1d6Config(PretrainedConfig):
                     setattr(self, f.name, f.default)
                 elif getattr(f, "default_factory", MISSING) is not MISSING:
                     setattr(self, f.name, f.default_factory())
+
+        if self.action_horizon <= 0:
+            raise ValueError(f"action_horizon must be positive, got {self.action_horizon}")
+        if self.action_chunk_size is not None:
+            if self.action_chunk_size <= 0:
+                raise ValueError(
+                    f"action_chunk_size must be positive, got {self.action_chunk_size}"
+                )
+            if self.action_horizon > self.action_chunk_size:
+                raise ValueError(
+                    "action_horizon cannot exceed action_chunk_size: "
+                    f"{self.action_horizon} > {self.action_chunk_size}"
+                )
 
     def to_filtered_dict(self, exclude_augment: bool = True) -> dict:
         """Return a dictionary representation of this config, optionally excluding augmentation keys."""

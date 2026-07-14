@@ -179,6 +179,26 @@ if __name__ == "__main__":
     config.model.model_name = "nvidia/Eagle-Block2A-2B-v2"
     config.model.backbone_trainable_params_fp32 = True
     config.model.use_relative_action = True
+    if ft_config.action_horizon is not None:
+        config.model.action_horizon = ft_config.action_horizon
+    if ft_config.action_chunk_size is not None:
+        config.model.action_chunk_size = ft_config.action_chunk_size
+    if config.model.action_horizon <= 0:
+        raise ValueError(
+            f"action_horizon must be positive, got {config.model.action_horizon}"
+        )
+    if config.model.action_chunk_size is not None:
+        if config.model.action_chunk_size <= 0:
+            raise ValueError(
+                "action_chunk_size must be positive, got "
+                f"{config.model.action_chunk_size}"
+            )
+        if config.model.action_horizon > config.model.action_chunk_size:
+            raise ValueError(
+                "action_horizon cannot exceed action_chunk_size: "
+                f"{config.model.action_horizon} > "
+                f"{config.model.action_chunk_size}"
+            )
 
     config.training.start_from_checkpoint = ft_config.base_model_path
     config.training.init_model_from = ft_config.init_model_from

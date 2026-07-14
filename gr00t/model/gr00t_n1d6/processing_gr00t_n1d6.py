@@ -131,6 +131,8 @@ class Gr00tN1d6Processor(BaseProcessor):
         max_action_dim: int = 29,
         apply_sincos_state_encoding: bool = False,
         max_action_horizon: int = 40,
+        action_chunk_size: int | None = None,
+        execution_action_horizon: int | None = None,
         use_albumentations: bool = False,
         extra_augmentation_config: dict | None = None,
         use_relative_action: bool = False,
@@ -164,6 +166,34 @@ class Gr00tN1d6Processor(BaseProcessor):
         self.max_state_dim = max_state_dim
         self.max_action_dim = max_action_dim
         self.max_action_horizon = max_action_horizon
+        self.action_chunk_size = action_chunk_size
+        self.execution_action_horizon = (
+            max_action_horizon
+            if execution_action_horizon is None
+            else int(execution_action_horizon)
+        )
+        if self.execution_action_horizon <= 0:
+            raise ValueError(
+                "execution_action_horizon must be positive, got "
+                f"{self.execution_action_horizon}"
+            )
+        if self.execution_action_horizon > self.max_action_horizon:
+            raise ValueError(
+                "execution_action_horizon cannot exceed max_action_horizon: "
+                f"{self.execution_action_horizon} > {self.max_action_horizon}"
+            )
+        if self.action_chunk_size is not None and self.action_chunk_size <= 0:
+            raise ValueError(
+                f"action_chunk_size must be positive, got {self.action_chunk_size}"
+            )
+        if (
+            self.action_chunk_size is not None
+            and self.action_chunk_size < self.max_action_horizon
+        ):
+            raise ValueError(
+                "action_chunk_size cannot be smaller than max_action_horizon: "
+                f"{self.action_chunk_size} < {self.max_action_horizon}"
+            )
 
         # Save image processing settings
         self.image_crop_size = image_crop_size
@@ -232,6 +262,46 @@ class Gr00tN1d6Processor(BaseProcessor):
             self.action_dim[embodiment_tag] = self.state_action_processor.get_action_dim(
                 embodiment_tag
             )
+        unitree_action_dims = {
+            EmbodimentTag.UNITREE_G1_29DOF: 102,
+            EmbodimentTag.UNITREE_G1_29DOF_HAND: 114,
+            EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW: 114,
+            EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY: 114,
+        }
+        for embodiment_tag, action_dim in unitree_action_dims.items():
+            if embodiment_tag.value not in self.state_action_processor.statistics:
+                continue
+            chunk_size = self._get_unitree_action_chunk_size(
+                embodiment_tag, action_dim
+            )
+            if self.max_action_horizon > chunk_size:
+                raise ValueError(
+                    "Model action horizon exceeds flattened action_chunk_size: "
+                    f"H_model={self.max_action_horizon}, "
+                    f"action_chunk_size={chunk_size}"
+                )
+
+    def _get_unitree_action_chunk_size(
+        self,
+        embodiment_tag: EmbodimentTag,
+        action_dim: int,
+    ) -> int:
+        params = self.state_action_processor.norm_params[embodiment_tag.value][
+            "action"
+        ]["mocap"]
+        stats_dim = int(np.asarray(params["min"]).size)
+        if stats_dim % action_dim != 0:
+            raise ValueError(
+                f"Action statistics dim {stats_dim} is not divisible by "
+                f"action_dim={action_dim}"
+            )
+        chunk_size = stats_dim // action_dim
+        if self.action_chunk_size is not None and chunk_size != self.action_chunk_size:
+            raise ValueError(
+                "Configured/data action_chunk_size mismatch: "
+                f"configured={self.action_chunk_size}, statistics={chunk_size}"
+            )
+        return chunk_size
 
     def decode_action(
         self,
@@ -244,23 +314,47 @@ class Gr00tN1d6Processor(BaseProcessor):
         out_dict = {}
         start_idx = 0
         joint_groups = self.modality_configs[embodiment_tag.value]["action"].modality_keys
-        action_horizon = len(self.modality_configs[embodiment_tag.value]["action"].delta_indices)
+        modality_horizon = len(
+            self.modality_configs[embodiment_tag.value]["action"].delta_indices
+        )
         for key in joint_groups:
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
-                action_horizon = 50
                 joint_dim = 102
+                chunk_size = self._get_unitree_action_chunk_size(
+                    embodiment_tag, joint_dim
+                )
             elif embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY):
-                action_horizon = 50
                 joint_dim = 114
+                chunk_size = self._get_unitree_action_chunk_size(
+                    embodiment_tag, joint_dim
+                )
             else:
                 joint_dim = self.state_action_processor.norm_params[embodiment_tag.value][
                     "action"
                 ][key]["dim"].item()
+                chunk_size = modality_horizon
 
-            sliced_action = action[..., :action_horizon, start_idx : start_idx + joint_dim]
-            if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
-                sliced_action = sliced_action.reshape(sliced_action.shape[0], 1, -1)
-            if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY):
+            if action.shape[-2] > chunk_size:
+                raise ValueError(
+                    "Model action horizon exceeds normalization chunk size: "
+                    f"H_model={action.shape[-2]}, action_chunk_size={chunk_size}"
+                )
+            sliced_action = action[
+                ..., :, start_idx : start_idx + joint_dim
+            ]
+            if embodiment_tag in (
+                EmbodimentTag.UNITREE_G1_29DOF,
+                EmbodimentTag.UNITREE_G1_29DOF_HAND,
+                EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW,
+                EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY,
+            ):
+                if sliced_action.shape[-2] < chunk_size:
+                    pad_shape = list(sliced_action.shape)
+                    pad_shape[-2] = chunk_size - sliced_action.shape[-2]
+                    sliced_action = np.concatenate(
+                        [sliced_action, np.zeros(pad_shape, dtype=sliced_action.dtype)],
+                        axis=-2,
+                    )
                 sliced_action = sliced_action.reshape(sliced_action.shape[0], 1, -1)
 
             out_dict[key] = sliced_action
@@ -268,7 +362,10 @@ class Gr00tN1d6Processor(BaseProcessor):
 
         # Use StateActionProcessor to unnormalize and convert to absolute
         return self.state_action_processor.unapply_action(
-            out_dict, embodiment_tag.value, state=state
+            out_dict,
+            embodiment_tag.value,
+            state=state,
+            action_horizon=self.execution_action_horizon,
         )
 
     def _apply_vlm_processing(self, images: np.ndarray, language: str) -> BatchFeature:
@@ -306,65 +403,66 @@ class Gr00tN1d6Processor(BaseProcessor):
             }
         }
 
-    def _reshape_unitree_g1_29dof_actions(self, normalized_actions: torch.Tensor) -> torch.Tensor:
-        """Reshape flattened Unitree G1 29DoF actions from (1, 5100) to (50, 102)."""
-        action_horizon = 50
-        action_dim = 102
-        expected_numel = action_horizon * action_dim
-        if normalized_actions.numel() != expected_numel:
+    def _reshape_flattened_unitree_values(
+        self,
+        values: torch.Tensor,
+        value_dim: int,
+        value_name: str,
+        expected_horizon: int | None = None,
+    ) -> torch.Tensor:
+        """Restore a flattened Unitree feature with a configurable horizon."""
+        if values.numel() % value_dim != 0:
             raise ValueError(
-                "Expected unitree_g1_29dof normalized_actions to contain "
-                f"{expected_numel} values, got shape {tuple(normalized_actions.shape)}"
+                f"Flattened {value_name} contains {values.numel()} values, which is "
+                f"not divisible by per-step dim {value_dim}"
             )
-        return normalized_actions.reshape(action_horizon, action_dim)
+        horizon = values.numel() // value_dim
+        if expected_horizon is not None and horizon != expected_horizon:
+            raise ValueError(
+                f"Flattened {value_name} horizon mismatch: data={horizon}, "
+                f"configured action_chunk_size={expected_horizon}"
+            )
+        return values.reshape(horizon, value_dim)
+
+    def _reshape_unitree_g1_29dof_actions(
+        self, normalized_actions: torch.Tensor
+    ) -> torch.Tensor:
+        return self._reshape_flattened_unitree_values(
+            normalized_actions,
+            value_dim=102,
+            value_name="unitree_g1_29dof action",
+            expected_horizon=self.action_chunk_size,
+        )
 
     def _reshape_unitree_g1_29dof_states(self, normalized_states: torch.Tensor) -> torch.Tensor:
-        """Reshape flattened Unitree G1 29DoF states from (1, 1750) to (50, 35)."""
-        state_horizon = 50
-        state_dim = 35
-        expected_numel = state_horizon * state_dim
-        if normalized_states.numel() != expected_numel:
-            raise ValueError(
-                "Expected unitree_g1_29dof normalized_states to contain "
-                f"{expected_numel} values, got shape {tuple(normalized_states.shape)}"
-            )
-        return normalized_states.reshape(state_horizon, state_dim)
+        return self._reshape_flattened_unitree_values(
+            normalized_states,
+            value_dim=35,
+            value_name="unitree_g1_29dof state",
+        )
 
     def _reshape_unitree_g1_29dof_hand_actions(self, normalized_actions: torch.Tensor) -> torch.Tensor:
-        """Reshape flattened Unitree G1 29DoF actions from (1, 5700) to (50, 114)."""
-        action_horizon = 50
-        action_dim = 114
-        expected_numel = action_horizon * action_dim
-        if normalized_actions.numel() != expected_numel:
-            raise ValueError(
-                "Expected unitree_g1_29dof normalized_actions to contain "
-                f"{expected_numel} values, got shape {tuple(normalized_actions.shape)}"
-            )
-        return normalized_actions.reshape(action_horizon, action_dim)
+        return self._reshape_flattened_unitree_values(
+            normalized_actions,
+            value_dim=114,
+            value_name="unitree_g1_29dof_hand action",
+            expected_horizon=self.action_chunk_size,
+        )
 
     def _reshape_unitree_g1_29dof_hand_states(self, normalized_states: torch.Tensor) -> torch.Tensor:
-        """Reshape flattened Unitree G1 29DoF states from (1, 2350) to (50, 47)."""
-        state_horizon = 50
-        state_dim = 47
-        expected_numel = state_horizon * state_dim
-        if normalized_states.numel() != expected_numel:
-            raise ValueError(
-                "Expected unitree_g1_29dof_hand normalized_states to contain "
-                f"{expected_numel} values, got shape {tuple(normalized_states.shape)}"
-            )
-        return normalized_states.reshape(state_horizon, state_dim)
+        return self._reshape_flattened_unitree_values(
+            normalized_states,
+            value_dim=47,
+            value_name="unitree_g1_29dof_hand state",
+        )
 
     def _reshape_unitree_g1_29dof_hand_no_history_states(self, normalized_states: torch.Tensor) -> torch.Tensor:
-        """Reshape flattened Unitree G1 29DoF states from (1, 2350) to (50, 47)."""
-        state_horizon = 50
-        state_dim = 47
-        expected_numel = state_horizon * state_dim
-        if normalized_states.numel() != expected_numel:
-            raise ValueError(
-                "Expected unitree_g1_29dof_hand_no_history normalized_states to contain "
-                f"{expected_numel} values, got shape {tuple(normalized_states.shape)}"
-            )
-        return normalized_states.reshape(state_horizon, state_dim)[-1:,:]
+        states = self._reshape_flattened_unitree_values(
+            normalized_states,
+            value_dim=47,
+            value_name="unitree_g1_29dof_hand_no_history state",
+        )
+        return states[-1:, :]
 
     def __call__(
         self,
@@ -391,9 +489,26 @@ class Gr00tN1d6Processor(BaseProcessor):
             )  # (t, d)
 
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
-                normalized_actions = self._reshape_unitree_g1_29dof_actions(normalized_actions)[:30]
+                normalized_actions = self._reshape_unitree_g1_29dof_actions(
+                    normalized_actions
+                )
             if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY):
-                normalized_actions = self._reshape_unitree_g1_29dof_hand_actions(normalized_actions)[:30]
+                normalized_actions = self._reshape_unitree_g1_29dof_hand_actions(
+                    normalized_actions
+                )
+            if embodiment_tag in (
+                EmbodimentTag.UNITREE_G1_29DOF,
+                EmbodimentTag.UNITREE_G1_29DOF_HAND,
+                EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW,
+                EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY,
+            ):
+                if normalized_actions.shape[0] < self.max_action_horizon:
+                    raise ValueError(
+                        "action_chunk_size must be at least action_horizon: "
+                        f"chunk={normalized_actions.shape[0]}, "
+                        f"horizon={self.max_action_horizon}"
+                    )
+                normalized_actions = normalized_actions[: self.max_action_horizon]
             action_dim = normalized_actions.shape[1]
             # Pad action to max_action_dim
             normalized_actions = torch.cat(
@@ -562,6 +677,8 @@ class Gr00tN1d6Processor(BaseProcessor):
                 "max_state_dim": self.max_state_dim,
                 "max_action_dim": self.max_action_dim,
                 "max_action_horizon": self.max_action_horizon,
+                "action_chunk_size": self.action_chunk_size,
+                "execution_action_horizon": self.execution_action_horizon,
                 # StateActionProcessor settings
                 "use_percentiles": self.use_percentiles,
                 "clip_outliers": self.clip_outliers,
@@ -619,6 +736,9 @@ class Gr00tN1d6Processor(BaseProcessor):
                 "color_jitter_params",
                 "use_relative_action",
                 "extra_augmentation_config",
+                "max_action_horizon",
+                "action_chunk_size",
+                "execution_action_horizon",
             ]
             for key in override_keys:
                 if key in kwargs:

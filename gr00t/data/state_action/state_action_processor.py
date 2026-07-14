@@ -31,6 +31,26 @@ from gr00t.data.utils import (
 import numpy as np
 
 
+_UNITREE_ACTION_LAYOUTS = {
+    EmbodimentTag.UNITREE_G1_29DOF.value: {
+        "action_dim": 102,
+        "raw_slice": slice(36, 102),
+    },
+    EmbodimentTag.UNITREE_G1_29DOF_HAND.value: {
+        "action_dim": 114,
+        "raw_slice": slice(36, 102),
+    },
+    EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW.value: {
+        "action_dim": 114,
+        "raw_slice": slice(36, 102),
+    },
+    EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY.value: {
+        "action_dim": 114,
+        "raw_slice": slice(36, 102),
+    },
+}
+
+
 class StateActionProcessor:
     """
     Unified processor for robot state and action data.
@@ -90,6 +110,127 @@ class StateActionProcessor:
 
     def eval(self):
         self.training = False
+
+    def remap_rtc_normalized_action(
+        self,
+        normalized_action: np.ndarray,
+        embodiment_tag: str,
+        source_start: int,
+        target_start: int,
+        steps: int,
+    ) -> np.ndarray:
+        """Move an RTC action segment between time-indexed normalization slots.
+
+        Unitree action statistics are computed over a flattened action chunk.
+        Consequently, copying normalized action ``source_start`` to
+        ``target_start`` directly changes its physical value.  This method
+        decodes with the source slot statistics and re-encodes with the target
+        slot statistics before the model freezes the prefix.
+
+        Returns a ``(B, steps, D_model)`` segment normalized for target slots.
+        """
+        values = np.asarray(normalized_action)
+        if values.ndim != 3:
+            raise ValueError(
+                "normalized_action must have shape (B, H, D), "
+                f"got {values.shape}"
+            )
+        if source_start < 0 or target_start < 0 or steps < 0:
+            raise ValueError(
+                "RTC time indices must be non-negative, "
+                f"got source={source_start}, target={target_start}, steps={steps}"
+            )
+        if source_start + steps > values.shape[1]:
+            raise ValueError(
+                "RTC source segment exceeds the model horizon: "
+                f"source={source_start}, steps={steps}, H={values.shape[1]}"
+            )
+
+        segment = values[:, source_start : source_start + steps].copy()
+        if steps == 0:
+            return segment
+
+        layout = _UNITREE_ACTION_LAYOUTS.get(embodiment_tag)
+        if layout is None:
+            # Other embodiments normally use time-shared per-channel stats.
+            return segment
+
+        action_dim = int(layout["action_dim"])
+        if values.shape[2] < action_dim:
+            raise ValueError(
+                f"Model action dim {values.shape[2]} is smaller than physical dim {action_dim}"
+            )
+
+        action_config = self.modality_configs[embodiment_tag]["action"]
+        if action_config.modality_keys != ["mocap"]:
+            raise ValueError(
+                "Unitree RTC normalization remapping expects one 'mocap' action group, "
+                f"got {action_config.modality_keys}"
+            )
+        params = self.norm_params[embodiment_tag]["action"]["mocap"]
+        stats_size = int(np.asarray(params["min"]).size)
+        if stats_size % action_dim != 0:
+            raise ValueError(
+                f"Action statistics size {stats_size} is not divisible by action_dim={action_dim}"
+            )
+        stats_horizon = stats_size // action_dim
+        if source_start + steps > stats_horizon or target_start + steps > stats_horizon:
+            raise ValueError(
+                "RTC segment exceeds the action-statistics horizon: "
+                f"source={source_start}, target={target_start}, steps={steps}, "
+                f"H_stats={stats_horizon}"
+            )
+
+        source_values = segment[..., :action_dim]
+        use_meanstd = (
+            action_config.mean_std_embedding_keys is not None
+            and "mocap" in action_config.mean_std_embedding_keys
+        )
+        if use_meanstd:
+            mean = np.asarray(params["mean"]).reshape(stats_horizon, action_dim)
+            std = np.asarray(params["std"]).reshape(stats_horizon, action_dim)
+            source_mean = mean[source_start : source_start + steps]
+            source_std = std[source_start : source_start + steps]
+            target_mean = mean[target_start : target_start + steps]
+            target_std = std[target_start : target_start + steps]
+
+            physical = np.where(
+                source_std != 0,
+                source_values * source_std + source_mean,
+                source_values,
+            )
+            safe_target_std = np.where(target_std != 0, target_std, 1.0)
+            remapped = (physical - target_mean) / safe_target_std
+            remapped = np.where(target_std != 0, remapped, physical)
+        else:
+            min_values = np.asarray(params["min"]).reshape(stats_horizon, action_dim)
+            max_values = np.asarray(params["max"]).reshape(stats_horizon, action_dim)
+            source_min = min_values[source_start : source_start + steps]
+            source_max = max_values[source_start : source_start + steps]
+            target_min = min_values[target_start : target_start + steps]
+            target_max = max_values[target_start : target_start + steps]
+
+            # Match unnormalize_values_minmax: the previously executed physical
+            # action was decoded after clipping the normalized value to [-1, 1].
+            physical = (
+                (np.clip(source_values, -1.0, 1.0) + 1.0)
+                / 2.0
+                * (source_max - source_min)
+                + source_min
+            )
+            target_range = target_max - target_min
+            safe_target_range = np.where(
+                np.isclose(target_range, 0.0), 1.0, target_range
+            )
+            remapped = 2.0 * (physical - target_min) / safe_target_range - 1.0
+            remapped = np.where(np.isclose(target_range, 0.0), 0.0, remapped)
+
+        # Rotation-6D values deliberately bypass normalization in apply_action
+        # and unapply_action, so they must also bypass this time-slot remapping.
+        raw_slice = layout["raw_slice"]
+        remapped[..., raw_slice] = source_values[..., raw_slice]
+        segment[..., :action_dim] = remapped.astype(segment.dtype, copy=False)
+        return segment
 
     def set_statistics(
         self,
@@ -430,6 +571,7 @@ class StateActionProcessor:
         action: dict[str, np.ndarray],
         embodiment_tag: str,
         state: dict[str, np.ndarray] | None = None,
+        action_horizon: int | None = None,
     ) -> dict[str, np.ndarray]:
         """
         Reverse action processing (denormalization, relative->absolute conversion).
@@ -445,6 +587,9 @@ class StateActionProcessor:
             state: Optional dict mapping joint_group -> raw state values
                 Required if any action group uses ActionRepresentation.RELATIVE
                 Shape per group: (T_state, D) or (B, T_state, D) for batched
+            action_horizon: Number of physical steps returned to the caller. For
+                flattened Unitree chunks this is independent of the statistics
+                chunk size.
 
         Returns:
             Dict mapping joint_group -> raw absolute action values
@@ -453,16 +598,29 @@ class StateActionProcessor:
         Raises:
             ValueError: If state is None but required for relative->absolute conversion
         """
-        action_horizon = 30
-        raw_mocap_tail = None
-        if embodiment_tag in (
-            EmbodimentTag.UNITREE_G1_29DOF.value,
-        ):
-            raw_mocap_tail = action["mocap"].reshape(-1, 102)[:, 36:].copy()
-        if embodiment_tag in (
-            EmbodimentTag.UNITREE_G1_29DOF_HAND.value, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW.value, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY.value
-        ):
-            raw_mocap_tail = action["mocap"].reshape(-1, 114)[:, 36:102].copy()
+        layout = _UNITREE_ACTION_LAYOUTS.get(embodiment_tag)
+        if action_horizon is None:
+            if layout is None:
+                action_horizon = len(
+                    self.modality_configs[embodiment_tag]["action"].delta_indices
+                )
+            else:
+                mocap_values = np.asarray(action["mocap"])
+                values_per_batch = (
+                    int(np.prod(mocap_values.shape[1:]))
+                    if mocap_values.ndim == 3
+                    else mocap_values.size
+                )
+                action_dim = int(layout["action_dim"])
+                if values_per_batch % action_dim != 0:
+                    raise ValueError(
+                        f"Flattened action size {values_per_batch} is not divisible "
+                        f"by action_dim={action_dim}"
+                    )
+                action_horizon = values_per_batch // action_dim
+        action_horizon = int(action_horizon)
+        if action_horizon <= 0:
+            raise ValueError(f"action_horizon must be positive, got {action_horizon}")
         # Step 1: Unnormalize actions
         unnormalized_values = {}
         modality_keys = self.modality_configs[embodiment_tag]["action"].modality_keys
@@ -488,16 +646,65 @@ class StateActionProcessor:
             unnormalized_values[joint_group] = unnormalized
 
         if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF.value:
-            mocap_shape = unnormalized_values["mocap"].shape
-            mocap = unnormalized_values["mocap"].reshape(-1, 102)
-            mocap[:, 36:] = raw_mocap_tail
-            unnormalized_values["mocap"] = mocap.reshape(mocap_shape)
-        if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND.value, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW.value, EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY.value):
-            mocap_shape = unnormalized_values["mocap"].shape
-            mocap = unnormalized_values["mocap"].reshape(-1, 114)
-            mocap[:, 36:102] = raw_mocap_tail
-            # unnormalized_values["mocap"] = mocap.reshape(mocap_shape)
-            unnormalized_values["mocap"] = mocap[:action_horizon].reshape(-1)[None,None,:]
+            mocap_values = unnormalized_values["mocap"]
+            raw_values = np.asarray(action["mocap"])
+            if mocap_values.ndim == 3:
+                batch_size = mocap_values.shape[0]
+                mocap = mocap_values.reshape(batch_size, -1, 102)
+                raw_mocap = raw_values.reshape(batch_size, -1, 102)
+                if action_horizon > mocap.shape[1]:
+                    raise ValueError(
+                        f"action_horizon={action_horizon} exceeds decoded chunk "
+                        f"size {mocap.shape[1]}"
+                    )
+                mocap[..., 36:] = raw_mocap[..., 36:]
+                unnormalized_values["mocap"] = mocap[:, :action_horizon].reshape(
+                    batch_size, 1, -1
+                )
+            else:
+                mocap = mocap_values.reshape(-1, 102)
+                raw_mocap = raw_values.reshape(-1, 102)
+                if action_horizon > mocap.shape[0]:
+                    raise ValueError(
+                        f"action_horizon={action_horizon} exceeds decoded chunk "
+                        f"size {mocap.shape[0]}"
+                    )
+                mocap[:, 36:] = raw_mocap[:, 36:]
+                unnormalized_values["mocap"] = mocap[:action_horizon].reshape(-1)
+        if embodiment_tag in (
+            EmbodimentTag.UNITREE_G1_29DOF_HAND.value,
+            EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW.value,
+            EmbodimentTag.UNITREE_G1_29DOF_HAND_NO_HISTORY.value,
+        ):
+            mocap_values = unnormalized_values["mocap"]
+            raw_values = np.asarray(action["mocap"])
+            if mocap_values.ndim == 3:
+                batch_size = mocap_values.shape[0]
+                mocap = mocap_values.reshape(batch_size, -1, 114)
+                raw_mocap = raw_values.reshape(batch_size, -1, 114)
+                if action_horizon > mocap.shape[1]:
+                    raise ValueError(
+                        f"action_horizon={action_horizon} exceeds decoded chunk "
+                        f"size {mocap.shape[1]}"
+                    )
+                mocap[..., 36:102] = raw_mocap[..., 36:102]
+                # The public modality has T=1 and stores the executable chunk in
+                # its feature axis: (B, 1, action_horizon * 114). Preserve batch and
+                # modality-time dimensions for strict policy validation.
+                unnormalized_values["mocap"] = mocap[:, :action_horizon].reshape(
+                    batch_size, 1, -1
+                )
+            else:
+                # Retain the unbatched convention for direct processor callers.
+                mocap = mocap_values.reshape(-1, 114)
+                raw_mocap = raw_values.reshape(-1, 114)
+                if action_horizon > mocap.shape[0]:
+                    raise ValueError(
+                        f"action_horizon={action_horizon} exceeds decoded chunk "
+                        f"size {mocap.shape[0]}"
+                    )
+                mocap[:, 36:102] = raw_mocap[:, 36:102]
+                unnormalized_values["mocap"] = mocap[:action_horizon].reshape(-1)
 
         # Step 2: Convert relative actions to absolute (if needed)
         action_configs = self.modality_configs[embodiment_tag]["action"].action_configs
