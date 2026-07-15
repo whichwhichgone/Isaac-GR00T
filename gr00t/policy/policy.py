@@ -1,5 +1,10 @@
+import os
+import time
 from abc import ABC, abstractmethod
 from typing import Any
+
+import numpy as np
+from PIL import Image
 
 
 class BasePolicy(ABC):
@@ -82,12 +87,45 @@ class BasePolicy(ABC):
         Raises:
             AssertionError/ValueError: If observation or action validation fails
         """
+        self._save_observation_images(observation)
         if self.strict:
             self.check_observation(observation)
         action, info = self._get_action(observation, options)
         if self.strict:
             self.check_action(action)
         return action, info
+
+    def _save_observation_images(
+        self, observation: dict[str, Any], save_dir: str = "./obs_images"
+    ) -> None:
+        """Save the images contained in observation["video"] to local disk for debugging.
+
+        The expected format of observation["video"] is a dict mapping camera name to
+        an array of shape (batch, time, H, W, C), e.g.:
+            {
+                "ego_view": np.zeros((1, 1, 256, 256, 3), dtype=np.uint8),
+                "left_wrist_view": np.zeros((1, 1, 256, 256, 3), dtype=np.uint8),
+                "right_wrist_view": np.zeros((1, 1, 256, 256, 3), dtype=np.uint8),
+            }
+
+        Args:
+            observation: Observation dict that must contain a "video" field.
+            save_dir: Directory to save the images into.
+
+        Raises:
+            ValueError: If observation["video"] is None or missing.
+        """
+        video = observation.get("video")
+        if video is None:
+            raise ValueError('observation["video"] is None, cannot save observation images')
+
+        os.makedirs(save_dir, exist_ok=True)
+        timestamp = f"{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000:03d}"
+        for camera_name, images in video.items():
+            image = np.asarray(images)[0, 0]  # (H, W, C)
+            Image.fromarray(image).save(
+                os.path.join(save_dir, f"{camera_name}_{timestamp}.png")
+            )
 
     @abstractmethod
     def reset(self, options: dict[str, Any] | None = None) -> dict[str, Any]:
