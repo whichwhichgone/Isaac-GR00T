@@ -241,17 +241,32 @@ class Gr00tN1d6ActionHead(nn.Module):
         actions: torch.Tensor,
         timesteps: torch.Tensor,
         embodiment_id: torch.Tensor,
+        schedule_dim: int | None = None,
     ) -> torch.Tensor:
-        """Encode one action stream, or independent body and hand token streams."""
         if not self.use_separate_hand_head:
             return self.action_encoder(actions, timesteps, embodiment_id)
 
         body_mask, hand_mask = self._action_coordinate_masks(actions)
-        body_features = self.action_encoder(actions * body_mask, timesteps, embodiment_id)
-        hand_features = self.hand_action_encoder(
-            actions * hand_mask, timesteps, embodiment_id
+
+        body_actions = actions * body_mask
+        hand_actions = actions * hand_mask
+
+        # Legato schedule 是公共条件，body/hand 两个分支都需要看到。
+        if schedule_dim is not None:
+            body_actions[..., schedule_dim] = actions[..., schedule_dim]
+            hand_actions[..., schedule_dim] = actions[..., schedule_dim]
+
+        body_features = self.action_encoder(
+            body_actions,
+            timesteps,
+            embodiment_id,
         )
-        # Layout is [body tokens (H), hand tokens (H)].
+        hand_features = self.hand_action_encoder(
+            hand_actions,
+            timesteps,
+            embodiment_id,
+        )
+
         return torch.cat((body_features, hand_features), dim=1)
 
     def _decode_action_velocity(
@@ -410,13 +425,26 @@ class Gr00tN1d6ActionHead(nn.Module):
         kappa = w / dt
         noisy_trajectory = (1 - t) * noise + t * actions
         velocity = (actions - noise) * (1.0 + kappa * (1 - t))
+
+        schedule_dim = None
+        if self.use_separate_hand_head:
+            schedule_dim = (
+                self.config.body_action_dim
+                + self.config.hand_action_dim
+            )
+            if schedule_dim >= self.action_dim:
+                raise ValueError(
+                    "Legato requires one reserved action padding dimension: "
+                    f"schedule_dim={schedule_dim}, max_action_dim={self.action_dim}"
+                )
+
         noisy_trajectory_guidance = w * actions + (1 - w) * noisy_trajectory
         noisy_trajectory_guidance = self._inject_schedule_into_padding(
-            noisy_trajectory_guidance, action_mask, w
+            noisy_trajectory_guidance, action_mask, w, schedule_dim=schedule_dim,
         )
         # Convert (continuous) t -> discrete if needed
         t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
-        action_features = self._encode_action_features(noisy_trajectory_guidance, t_discretized, embodiment_id)
+        action_features = self._encode_action_features(noisy_trajectory_guidance, t_discretized, embodiment_id, schedule_dim=schedule_dim)
         # Maybe add position embedding.
         action_features = self._add_action_position_embedding(action_features)
 
