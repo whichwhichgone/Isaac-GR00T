@@ -416,7 +416,7 @@ class Gr00tN1d6ActionHead(nn.Module):
         )
         # Convert (continuous) t -> discrete if needed
         t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
-        action_features = self._encode_action_features(noisy_trajectory, t_discretized, embodiment_id)
+        action_features = self._encode_action_features(noisy_trajectory_guidance, t_discretized, embodiment_id)
         # Maybe add position embedding.
         action_features = self._add_action_position_embedding(action_features)
 
