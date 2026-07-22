@@ -57,6 +57,9 @@ class Gr00tN1d6Config(PretrainedConfig):
     max_state_dim: int = 29  # Default from state_shape
     max_action_dim: int = 29  # Default from action_shape
     action_horizon: int = 16
+    body_action_dim: int | None = None
+    hand_action_dim: int | None = None
+    hand_loss_weight: float = 1
     hidden_size: int = 1024
     input_embedding_dim: int = 1536
 

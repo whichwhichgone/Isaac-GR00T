@@ -43,7 +43,7 @@ EMBODIMENT_TAG_TO_PROJECTOR_INDEX = {
     "oxe_droid": 16,
     "unitree_g1_29dof": 10,
     "unitree_g1_29dof_hand": 11,
-    "unitree_g1_29dof_hand_2s": 12,
+    "unitree_g1_29dof_hand_single_view": 12,
     "unitree_g1_15x7_mocap": 15,
     "unitree_g1_11x9_mocap": 17
 }
@@ -249,7 +249,7 @@ class Gr00tN1d6Processor(BaseProcessor):
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
                 action_horizon = 50
                 joint_dim = 102
-            elif embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF_HAND:
+            elif embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
                 action_horizon = 50
                 joint_dim = 114
             else:
@@ -260,7 +260,7 @@ class Gr00tN1d6Processor(BaseProcessor):
             sliced_action = action[..., :action_horizon, start_idx : start_idx + joint_dim]
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
                 sliced_action = sliced_action.reshape(sliced_action.shape[0], 1, -1)
-            if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF_HAND:
+            if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
                 sliced_action = sliced_action.reshape(sliced_action.shape[0], 1, -1)
 
             out_dict[key] = sliced_action
@@ -380,7 +380,7 @@ class Gr00tN1d6Processor(BaseProcessor):
 
             if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
                 normalized_actions = self._reshape_unitree_g1_29dof_actions(normalized_actions)
-            if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF_HAND:
+            if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
                 normalized_actions = self._reshape_unitree_g1_29dof_hand_actions(normalized_actions)
             action_dim = normalized_actions.shape[1]
             # Pad action to max_action_dim
@@ -423,7 +423,7 @@ class Gr00tN1d6Processor(BaseProcessor):
 
         if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF:
             normalized_states = self._reshape_unitree_g1_29dof_states(normalized_states)
-        if embodiment_tag == EmbodimentTag.UNITREE_G1_29DOF_HAND:
+        if embodiment_tag in (EmbodimentTag.UNITREE_G1_29DOF_HAND, EmbodimentTag.UNITREE_G1_29DOF_HAND_SINGLE_VIEW):
             normalized_states = self._reshape_unitree_g1_29dof_hand_states(normalized_states)
 
         normalized_states = torch.cat(

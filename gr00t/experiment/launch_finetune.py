@@ -26,35 +26,76 @@ def load_modality_config(modality_config_path: str):
         raise FileNotFoundError(f"Modality config path does not exist: {modality_config_path}")
 
 
+def parse_dataset_path_groups(dataset_path_groups: list[str]) -> list[list[str]]:
+    """Parse comma-separated dataset path groups from the finetune CLI."""
+    parsed_groups = []
+    for group in dataset_path_groups:
+        paths = [path.strip() for path in group.split(",") if path.strip()]
+        if len(paths) == 0:
+            raise ValueError("--dataset-path-groups contains an empty dataset group")
+        parsed_groups.append(paths)
+    return parsed_groups
+
+
+def get_mix_ratios(ft_config: FinetuneConfig, expected_len: int, flag_name: str) -> list[float]:
+    if ft_config.dataset_mix_ratios is None:
+        return [1.0] * expected_len
+
+    if len(ft_config.dataset_mix_ratios) != expected_len:
+        raise ValueError(
+            "--dataset-mix-ratios must have the same length as "
+            f"{flag_name} ({len(ft_config.dataset_mix_ratios)} != {expected_len})"
+        )
+    return ft_config.dataset_mix_ratios
+
+
+def get_embodiment_tags(ft_config: FinetuneConfig, expected_len: int, flag_name: str) -> list[str]:
+    if ft_config.dataset_embodiment_tags is None:
+        if ft_config.embodiment_tag is None:
+            raise ValueError("Either --embodiment-tag or --dataset-embodiment-tags must be provided")
+        return [ft_config.embodiment_tag.value] * expected_len
+
+    if len(ft_config.dataset_embodiment_tags) != expected_len:
+        raise ValueError(
+            "--dataset-embodiment-tags must have the same length as "
+            f"{flag_name} ({len(ft_config.dataset_embodiment_tags)} != {expected_len})"
+        )
+    return [tag.value for tag in ft_config.dataset_embodiment_tags]
+
+
 def build_dataset_configs(ft_config: FinetuneConfig) -> list[dict]:
     """Build data.datasets config for single-dataset or multi-dataset finetuning."""
+    if ft_config.dataset_path_groups is not None:
+        if len(ft_config.dataset_path_groups) == 0:
+            raise ValueError("--dataset-path-groups must contain at least one dataset group")
+
+        dataset_path_groups = parse_dataset_path_groups(ft_config.dataset_path_groups)
+        mix_ratios = get_mix_ratios(
+            ft_config, len(dataset_path_groups), "--dataset-path-groups"
+        )
+        embodiment_tags = get_embodiment_tags(
+            ft_config, len(dataset_path_groups), "--dataset-path-groups"
+        )
+
+        return [
+            {
+                "dataset_paths": dataset_paths,
+                "mix_ratio": mix_ratio,
+                "embodiment_tag": dataset_embodiment_tag,
+            }
+            for dataset_paths, mix_ratio, dataset_embodiment_tag in zip(
+                dataset_path_groups, mix_ratios, embodiment_tags
+            )
+        ]
+
     if ft_config.dataset_paths is not None:
         if len(ft_config.dataset_paths) == 0:
             raise ValueError("--dataset-paths must contain at least one dataset path")
 
-        if ft_config.dataset_mix_ratios is None:
-            mix_ratios = [1.0] * len(ft_config.dataset_paths)
-        else:
-            mix_ratios = ft_config.dataset_mix_ratios
-            if len(mix_ratios) != len(ft_config.dataset_paths):
-                raise ValueError(
-                    "--dataset-mix-ratios must have the same length as --dataset-paths "
-                    f"({len(mix_ratios)} != {len(ft_config.dataset_paths)})"
-                )
-
-        if ft_config.dataset_embodiment_tags is None:
-            if ft_config.embodiment_tag is None:
-                raise ValueError(
-                    "Either --embodiment-tag or --dataset-embodiment-tags must be provided"
-                )
-            embodiment_tags = [ft_config.embodiment_tag.value] * len(ft_config.dataset_paths)
-        else:
-            embodiment_tags = [tag.value for tag in ft_config.dataset_embodiment_tags]
-            if len(embodiment_tags) != len(ft_config.dataset_paths):
-                raise ValueError(
-                    "--dataset-embodiment-tags must have the same length as --dataset-paths "
-                    f"({len(embodiment_tags)} != {len(ft_config.dataset_paths)})"
-                )
+        mix_ratios = get_mix_ratios(ft_config, len(ft_config.dataset_paths), "--dataset-paths")
+        embodiment_tags = get_embodiment_tags(
+            ft_config, len(ft_config.dataset_paths), "--dataset-paths"
+        )
 
         return [
             {
@@ -68,13 +109,21 @@ def build_dataset_configs(ft_config: FinetuneConfig) -> list[dict]:
         ]
 
     if ft_config.dataset_path is None:
-        raise ValueError("Either --dataset-path or --dataset-paths must be provided")
+        raise ValueError(
+            "Either --dataset-path, --dataset-paths, or --dataset-path-groups must be provided"
+        )
 
     if ft_config.dataset_mix_ratios is not None:
-        raise ValueError("--dataset-mix-ratios can only be used with --dataset-paths")
+        raise ValueError(
+            "--dataset-mix-ratios can only be used with "
+            "--dataset-paths or --dataset-path-groups"
+        )
 
     if ft_config.dataset_embodiment_tags is not None:
-        raise ValueError("--dataset-embodiment-tags can only be used with --dataset-paths")
+        raise ValueError(
+            "--dataset-embodiment-tags can only be used with "
+            "--dataset-paths or --dataset-path-groups"
+        )
 
     if ft_config.embodiment_tag is None:
         raise ValueError("--embodiment-tag must be provided when using --dataset-path")
@@ -114,6 +163,9 @@ if __name__ == "__main__":
     config.model.tune_visual = ft_config.tune_visual
     config.model.tune_projector = ft_config.tune_projector
     config.model.tune_diffusion_model = ft_config.tune_diffusion_model
+    config.model.body_action_dim = ft_config.body_action_dim
+    config.model.hand_action_dim = ft_config.hand_action_dim
+    config.model.hand_loss_weight = ft_config.hand_loss_weight
     config.model.state_dropout_prob = ft_config.state_dropout_prob
     config.model.random_rotation_angle = ft_config.random_rotation_angle
     config.model.color_jitter_params = ft_config.color_jitter_params

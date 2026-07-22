@@ -190,6 +190,8 @@ class Gr00tTrainer(Trainer):
         """
         self.action_offset = kwargs.pop("action_offset", None)
         self.multiprocessing_context = kwargs.pop("multiprocessing_context", "fork")
+        self._split_loss_sums: dict[str, torch.Tensor] = {}
+        self._split_loss_count = 0
         super().__init__(
             *args,
             **kwargs,
@@ -197,6 +199,22 @@ class Gr00tTrainer(Trainer):
         )
 
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
+        if "loss" in logs and self._split_loss_count > 0:
+            body_sum = self._split_loss_sums["body_loss"]
+            hand_sum = self._split_loss_sums["hand_loss"]
+            count = torch.tensor(
+                float(self._split_loss_count), device=body_sum.device, dtype=torch.float32
+            )
+            local_values = torch.stack([body_sum, hand_sum, count]).reshape(1, 3)
+            gathered_values = self._nested_gather(local_values)
+            total_count = gathered_values[:, 2].sum().clamp_min(1.0)
+
+            logs = dict(logs)
+            logs["body_loss"] = (gathered_values[:, 0].sum() / total_count).item()
+            logs["hand_loss"] = (gathered_values[:, 1].sum() / total_count).item()
+            self._split_loss_sums.clear()
+            self._split_loss_count = 0
+
         # Hide epoch from logged metrics as it's misleading for Iterable datasets.
         epoch = self.state.epoch
         self.state.epoch = None
@@ -301,6 +319,17 @@ class Gr00tTrainer(Trainer):
 
         # Record last loss for testing purposes.
         self.loss = loss
+
+        if model.training:
+            for key in ("body_loss", "hand_loss"):
+                if key in outputs:
+                    value = outputs[key].detach().float()
+                    if key not in self._split_loss_sums:
+                        self._split_loss_sums[key] = value.clone()
+                    else:
+                        self._split_loss_sums[key] += value
+            if "body_loss" in outputs and "hand_loss" in outputs:
+                self._split_loss_count += 1
 
         # --------------------------------------------------------------
         # Accuracy calculation

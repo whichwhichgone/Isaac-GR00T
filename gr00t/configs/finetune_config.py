@@ -35,18 +35,27 @@ class FinetuneConfig:
     If provided, this takes precedence over dataset_path.
     """
 
+    dataset_path_groups: list[str] | None = None
+    """
+    Groups of LeRobot dataset root directories for multi-dataset finetuning.
+    Each group is a comma-separated string of paths, for example:
+    "/path/to/old_A,/path/to/new_A" "/path/to/B" "/path/to/C".
+    Grouped paths share one mix ratio and one embodiment tag.
+    If provided, this takes precedence over dataset_paths and dataset_path.
+    """
+
     dataset_mix_ratios: list[float] | None = None
     """
-    Optional per-dataset sampling ratios for dataset_paths.
-    If omitted, all datasets use ratio 1.0.
-    Must have the same length as dataset_paths when provided.
+    Optional per-dataset sampling ratios for dataset_paths or dataset_path_groups.
+    If omitted, all datasets/groups use ratio 1.0.
+    Must have the same length as dataset_paths or dataset_path_groups when provided.
     """
 
     dataset_embodiment_tags: list[EmbodimentTag] | None = None
     """
-    Optional per-dataset embodiment tags for dataset_paths.
+    Optional per-dataset embodiment tags for dataset_paths or dataset_path_groups.
     If omitted, all datasets use embodiment_tag.
-    Must have the same length as dataset_paths when provided.
+    Must have the same length as dataset_paths or dataset_path_groups when provided.
     """
 
     init_model_from: str | None = None
@@ -72,6 +81,20 @@ class FinetuneConfig:
 
     tune_diffusion_model: bool = True
     """If True, fine-tune the diffusion-based action decoder (if present in the model)."""
+
+    body_action_dim: int | None = None
+    """
+    Number of leading action dimensions belonging to the robot body.
+    When set, the remaining valid action dimensions are treated as hand actions and
+    independent body/hand action encoders and decoders are enabled. If omitted, the
+    original single-head model is preserved.
+    """
+
+    hand_action_dim: int | None = None
+    """Number of hand dimensions immediately following the body action dimensions."""
+
+    hand_loss_weight: float = 0.1
+    """Weight applied to hand loss when body_action_dim enables the split action head."""
 
     state_dropout_prob: float = 0.0
     """

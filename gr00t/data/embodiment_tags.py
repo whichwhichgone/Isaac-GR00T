@@ -62,8 +62,6 @@ class EmbodimentTag(Enum):
 
     UNITREE_G1_29DOF = "unitree_g1_29dof"
     UNITREE_G1_29DOF_HAND = "unitree_g1_29dof_hand"
-    UNITREE_G1_29DOF_HAND_2S = "unitree_g1_29dof_hand_2s"
+    UNITREE_G1_29DOF_HAND_SINGLE_VIEW = "unitree_g1_29dof_hand_single_view"
     UNITREE_G1_15X7_MOCAP = "unitree_g1_15x7_mocap"
     UNITREE_G1_11X9_MOCAP = "unitree_g1_11x9_mocap"
-
-
